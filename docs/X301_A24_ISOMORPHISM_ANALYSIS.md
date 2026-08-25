@@ -3,9 +3,9 @@
 Date: 2026-08-25. Disposition: analysis only; no parameter or byte-contract
 change is authorized by this document.
 
-## Frozen model
+## Current draft model
 
-For the frozen twisted Edwards coefficients `a=2086388329`, `d=301` over
+For the authoritative twisted Edwards coefficients `a=2086388329`, `d=301` over
 `p=2^301-2^99+947`, the documented birational map gives
 
 ```
@@ -52,13 +52,13 @@ constant into another multiplication; it does not remove it.
 
 ## Contract and performance consequence
 
-A genuinely different Montgomery coordinate would change the frozen base
-coordinate, every X301 public key, every shared secret, all KATs and the TLS
-group's wire bytes. It would be a new X301 byte contract, not an internal
-optimization. The possible saving is only the roughly one full constant
-multiplication per ladder round identified in the performance brief; it does
-not justify reopening a frozen interoperable encoding.
+A genuinely different Montgomery coordinate would change the current draft
+base coordinate, every X301 public key, every shared secret, all KATs and the
+TLS group's wire bytes. It would be a different X301 byte contract, not an
+internal optimization. The possible saving is only the roughly one full
+constant multiplication per ladder round identified in the performance brief.
 
-Recommendation: retain the present model and `a24`. Revisit only before a new
-and explicitly incompatible X301 profile is frozen; do not alter the current
-provider.
+Recommendation: retain the present model and `a24` when the X301 contract is
+frozen. This document is an analysis and recommendation, not the freeze
+decision; changing the model afterwards would require a new, explicitly
+incompatible X301 profile.
