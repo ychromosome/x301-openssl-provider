@@ -58,7 +58,7 @@ X301_PUBLIC=5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2a
 X301_SHARED=b5d19e31e6bfa6f5c47411738360ba94b7bbff1c4bb9fc646e9775bbd7565a6052819781c21a
 
 for mode in defined tainted; do
-    for case_name in public sign x301-derive; do
+    for case_name in public sign x301-keygen x301-derive; do
         env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
             ED301_CT_SECRET_HEX="$SECRET" \
             ED301_CT_EXPECTED_PUBLIC_HEX="$PUBLIC" \

@@ -3,7 +3,10 @@ use std::{env, process::ExitCode};
 use ed301_eddsa::{
     SigningKey,
     parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
-    x301::{PUBLIC_BYTES as X301_PUBLIC_BYTES, SHARED_BYTES as X301_SHARED_BYTES, x301},
+    x301::{
+        PUBLIC_BYTES as X301_PUBLIC_BYTES, SHARED_BYTES as X301_SHARED_BYTES, public_from_secret,
+        x301,
+    },
 };
 use ed301_valgrind_client::{get_vbits, make_defined, mark_undefined, running_on_valgrind};
 
@@ -53,6 +56,7 @@ fn run() -> Result<(), String> {
     match case.as_str() {
         "public" => run_public(mode)?,
         "sign" => run_sign(mode)?,
+        "x301-keygen" => run_x301_keygen(mode)?,
         "x301-derive" => run_x301_derive(mode)?,
         _ => return Err(format!("unsupported case: {case}")),
     }
@@ -95,6 +99,19 @@ fn run_sign(mode: Mode) -> Result<(), String> {
     make_defined(&mut seed);
     if signature != expected {
         return Err("signature KAT mismatch".into());
+    }
+    Ok(())
+}
+
+fn run_x301_keygen(mode: Mode) -> Result<(), String> {
+    let mut scalar = required_array::<SEED_BYTES>(SECRET_ENV)?;
+    let expected = required_array::<X301_PUBLIC_BYTES>(X301_SHARED_ENV)?;
+    apply_mode(mode, &mut scalar);
+    let public = public_from_secret(&scalar).map_err(|_| "X301 public derivation failed")?;
+    require_public_vbits(mode, &public)?;
+    make_defined(&mut scalar);
+    if public != expected {
+        return Err("X301 public-key KAT mismatch".into());
     }
     Ok(())
 }

@@ -10,8 +10,10 @@ use crypto_bigint::Choice;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
+    edwards::EdwardsPoint,
     field_5x64::Fe301,
     parameters::{FIELD_BITS, FIELD_BYTES},
+    scalar::Scalar,
     secret::{Secret, secret},
     secret_taint::declassify,
 };
@@ -124,10 +126,22 @@ pub fn x301(secret_bytes: &[u8], u_bytes: &[u8]) -> Result<SharedSecret, X301Err
 /// Source: the RFC 7748 section 6 Diffie-Hellman construction, using the D1
 /// X301 base coordinate and D3 scalar clamping.
 pub fn public_from_secret(secret: &[u8]) -> Result<[u8; X301_BYTES], X301Error> {
-    let output = x301(secret, &BASE_U_BYTES)?;
-    let mut public = *output.as_bytes();
-    declassify(&mut public);
-    Ok(public)
+    let secret: &[u8; X301_BYTES] = secret
+        .try_into()
+        .map_err(|_| X301Error::InvalidSecretLength)?;
+    let clamped = clamp_scalar(secret);
+    let reduced = Scalar::reduce_pruned_le(&clamped);
+
+    // Let L be the odd prime subgroup order. A clamped k is in
+    // [2^300, 2^301) and k = 0 (mod 4). The only multiples of L in this
+    // interval are 2L and 3L; because L = 3 (mod 4), their residues are 2
+    // and 1. Also 4L >= 2^301. Hence no clamped k is 0 modulo L.
+    #[cfg(debug_assertions)]
+    debug_assert!(!reduced.is_zero().to_bool());
+
+    EdwardsPoint::scalar_mul_base(&reduced)
+        .montgomery_u_public_artifact()
+        .map_err(|_| X301Error::AllZeroSharedSecret)
 }
 
 /// Derive a raw X301 shared secret from a scalar and peer public key.
@@ -270,6 +284,16 @@ pub(crate) fn clamped_scalar_for_test(input: &[u8; X301_BYTES]) -> [u8; X301_BYT
 #[cfg(test)]
 pub(crate) fn montgomery_a_for_test() -> Fe301 {
     A24_MINUS.mul_small(4).add(Fe301::from_u64(2))
+}
+
+#[cfg(test)]
+pub(crate) fn public_from_secret_ladder_for_test(
+    secret: &[u8],
+) -> Result<[u8; X301_BYTES], X301Error> {
+    let output = x301(secret, &BASE_U_BYTES)?;
+    let mut public = *output.as_bytes();
+    declassify(&mut public);
+    Ok(public)
 }
 
 #[cfg(test)]

@@ -506,6 +506,40 @@ impl EdwardsPoint {
         Ok((encoded, canonical_point))
     }
 
+    /// Map a secret-derived Edwards point directly to its public Montgomery
+    /// `u` coordinate.
+    ///
+    /// X301 decision D1 gives `u = (1 + y) / (1 - y)`.  For projective
+    /// `(X:Y:Z:T)`, this is `(Z + Y) / (Z - Y)`, so the conversion needs one
+    /// inversion and never materializes or re-decodes an affine Edwards
+    /// encoding.  This is the fixed-base public-key pattern used by X25519
+    /// implementations.  A full curve invariant check retains the existing
+    /// fixed-base fault boundary; the caller separately proves that its
+    /// nonzero scalar cannot produce the identity, so the denominator and
+    /// output checks are debug invariants rather than secret-dependent
+    /// release paths.
+    pub(crate) fn montgomery_u_public_artifact(
+        self,
+    ) -> Result<[u8; FIELD_BYTES], EdwardsPointError> {
+        let mut point_is_valid = self.is_valid();
+        declassify(&mut point_is_valid);
+        if !point_is_valid.to_bool() {
+            return Err(EdwardsPointError);
+        }
+
+        let numerator = self.z.add(self.y);
+        let denominator = self.z.sub(self.y);
+        let inverse = denominator.invert();
+        debug_assert!(inverse.is_some().to_bool());
+
+        let coordinate = numerator.mul(inverse.to_inner_unchecked());
+        debug_assert!(!coordinate.is_zero().to_bool());
+
+        let mut encoded = coordinate.to_canonical_bytes();
+        declassify(&mut encoded);
+        Ok(encoded)
+    }
+
     #[inline(always)]
     fn encode_inner(
         self,

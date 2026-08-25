@@ -13,11 +13,12 @@ use crate::{
     edwards::{BASEPOINT_ENCODING, EdwardsPoint},
     field_5x64::Fe301,
     parameters::{EDWARDS_A, EDWARDS_D, FIELD_BYTES},
+    scalar::Scalar,
     test_support::{decode_hex_array, splitmix64},
     x301::{
         BASE_U_BYTES, PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, X301_BYTES, X301Error,
-        clamped_scalar_for_test, montgomery_a_for_test, public_from_secret, shared_secret,
-        validate_public_encoding, x301,
+        clamped_scalar_for_test, montgomery_a_for_test, public_from_secret,
+        public_from_secret_ladder_for_test, shared_secret, validate_public_encoding, x301,
     },
 };
 
@@ -74,6 +75,51 @@ fn sizes_and_fixed_rfc_style_kats_match_the_independent_oracle() {
     let shared_b = shared_secret(&SECRET_B, &PUBLIC_A).expect("B derives with A");
     assert_eq!(shared_a.as_bytes(), &SHARED_AB);
     assert_eq!(shared_b.as_bytes(), &SHARED_AB);
+}
+
+#[test]
+fn k1_clamped_scalar_reduction_matches_the_independent_boundary_vectors() {
+    let document: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../reference/x301/x301-perf-k1-seed.json"
+    ))
+    .expect("the independent K1 seed parses");
+    assert_eq!(
+        document["source_sha256"].as_str(),
+        Some("61514b856d8b96e4c3c52234f23021c08bc4ff87a20492489070e18330f11f59")
+    );
+    let vectors = document["vectors"].as_array().expect("K1 vector array");
+    assert_eq!(vectors.len(), 9);
+
+    let mut interval_counts = [0_usize; 4];
+    for vector in vectors {
+        let label = vector["label"].as_str().expect("K1 label");
+        let clamped = decode_runtime_hex(
+            vector["clamped_k_le_hex"]
+                .as_str()
+                .expect("K1 clamped scalar"),
+        );
+        let expected = decode_runtime_hex(
+            vector["k_mod_L_le_hex"]
+                .as_str()
+                .expect("K1 reduced scalar"),
+        );
+        let subtracted = vector["subtracted_multiples_of_L"]
+            .as_u64()
+            .expect("K1 interval") as usize;
+        interval_counts[subtracted] += 1;
+
+        assert_eq!(clamped[0] & 3, 0, "{label}");
+        assert_eq!(clamped[FIELD_BYTES - 1] & 0xe0, 0, "{label}");
+        assert_ne!(clamped[FIELD_BYTES - 1] & 0x10, 0, "{label}");
+        assert_eq!(
+            Scalar::reduce_pruned_le(&clamped).canonical_bytes(),
+            expected,
+            "{label}"
+        );
+    }
+    assert!(interval_counts[1] > 0);
+    assert!(interval_counts[2] > 0);
+    assert!(interval_counts[3] > 0);
 }
 
 #[test]
@@ -474,8 +520,20 @@ fn x301_python_oracle_matches_10000_cases_and_torsion_derivation() {
         let expected_public_b = decode_runtime_hex(columns[4]);
         let expected_shared = decode_runtime_hex(columns[5]);
 
-        assert_eq!(public_from_secret(&secret_a), Ok(expected_public_a));
-        assert_eq!(public_from_secret(&secret_b), Ok(expected_public_b));
+        let public_a = public_from_secret(&secret_a);
+        let public_b = public_from_secret(&secret_b);
+        assert_eq!(public_a, Ok(expected_public_a));
+        assert_eq!(public_b, Ok(expected_public_b));
+        assert_eq!(
+            public_from_secret_ladder_for_test(&secret_a),
+            public_a,
+            "K1 ladder differential A case {cases}"
+        );
+        assert_eq!(
+            public_from_secret_ladder_for_test(&secret_b),
+            public_b,
+            "K1 ladder differential B case {cases}"
+        );
         let shared_a = shared_secret(&secret_a, &expected_public_b).expect("A with B");
         let shared_b = shared_secret(&secret_b, &expected_public_a).expect("B with A");
         assert_eq!(shared_a.as_bytes(), &expected_shared, "case {cases}");

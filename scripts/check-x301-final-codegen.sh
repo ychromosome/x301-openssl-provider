@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# Final-binary X301 ladder gate.
+# Final-binary X301 ladder and fixed-base key-generation gate.
 # Sources: RFC 7748 Section 5 fixed Montgomery ladder; X301 decisions D2-D4;
 # the repository constant-time contract.  This gate is intentionally tied to
 # the reviewed x86-64 Rust lowering and must be rerun after every toolchain
@@ -48,6 +48,9 @@ test ! -e "$EVIDENCE" || {
 DUMP=$EVIDENCE/provider.objdump
 X301=$EVIDENCE/x301.asm
 LOOP=$EVIDENCE/x301-ladder-loop.asm
+PUBLIC=$EVIDENCE/x301-public-from-secret.asm
+BASE_SELECT=$EVIDENCE/x301-basepoint-select.asm
+AFFINE_SELECT=$EVIDENCE/x301-affine-select.asm
 SUMMARY=$EVIDENCE/summary.txt
 /usr/bin/objdump -d -C --no-show-raw-insn --disassemble-zeroes --wide \
     "$MODULE" >"$DUMP"
@@ -168,7 +171,7 @@ test "$cmov" -ge 40 || {
 # defined when the scalar contents are tainted.
 /usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
-            $2 !~ /^lea/ { print }
+            $2 !~ /^lea/ && $2 !~ /^nop/ { print }
 ' "$LOOP" >"$EVIDENCE/x301-indexed-memory.txt"
 test "$(/usr/bin/awk 'END { print NR + 0 }' \
         "$EVIDENCE/x301-indexed-memory.txt")" -eq 1
@@ -204,6 +207,73 @@ for entry in \
     fi
 done
 
+# K1: X301 public-key derivation reuses the existing constant-time Edwards
+# fixed-base machinery.  Thin LTO inlines the two radix-16 loops into
+# public_from_secret(), while leaving both selectors as named leaves.  The
+# selectors must remain straight-line and must never address their tables by
+# a secret digit.  The caller may branch only for public length, fixed loop
+# counters, declassified impossible-fault predicates and unwind cleanup;
+# check-secret-taint.sh independently binds those classifications.
+extract_symbol 'ed301_eddsa::x301::public_from_secret' "$PUBLIC"
+extract_symbol 'ed301_eddsa::edwards::select_basepoint' "$BASE_SELECT"
+extract_symbol \
+    '<ed301_eddsa::edwards::AffineNielsPoint>::conditional_select' \
+    "$AFFINE_SELECT"
+
+for section in "$BASE_SELECT" "$AFFINE_SELECT"; do
+    if forbidden_straight_line "$section"; then
+        echo "fixed-base selector contains conditional control flow" >&2
+        exit 1
+    fi
+    if /usr/bin/awk '
+        /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
+                $2 !~ /^lea/ && $2 !~ /^nop/ { print; bad = 1 }
+        END { exit bad ? 0 : 1 }
+    ' "$section"; then
+        echo "fixed-base selector contains indexed memory" >&2
+        exit 1
+    fi
+done
+
+if /usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ &&
+            ($2 ~ /^loop/ || $2 ~ /^div/ || $2 ~ /^idiv/ ||
+             $2 == "ud2" || $2 == "int3") { print; bad = 1 }
+    END { exit bad ? 0 : 1 }
+' "$PUBLIC"; then
+    echo "forbidden instruction in final X301 key-generation function" >&2
+    exit 1
+fi
+
+base_select_calls=$(/usr/bin/grep -c \
+    'call.*<ed301_eddsa::edwards::select_basepoint>' "$PUBLIC")
+affine_add_calls=$(/usr/bin/grep -c \
+    'call.*<<ed301_eddsa::edwards::EdwardsPoint>::add_affine>' "$PUBLIC")
+double_calls=$(/usr/bin/grep -c \
+    'call.*<<ed301_eddsa::edwards::EdwardsPoint>::double>' "$PUBLIC")
+invert_calls=$(/usr/bin/grep -c \
+    'call.*<<ed301_eddsa::field_5x64::Fe301>::invert>' "$PUBLIC")
+test "$base_select_calls" -eq 2
+test "$affine_add_calls" -eq 2
+test "$double_calls" -eq 4
+test "$invert_calls" -eq 1
+
+# Both mixed-add loops are controlled by the same public bound (74 decimal).
+# Secret digits are read with those public loop indices and passed by value to
+# the full-scan selector; no digit is used to address the basepoint table.
+test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x4a,' "$PUBLIC")" -eq 2
+/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { print }
+' "$PUBLIC" >"$EVIDENCE/x301-public-from-secret-branches.txt"
+/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
+            $2 !~ /^lea/ { print }
+' "$PUBLIC" >"$EVIDENCE/x301-public-from-secret-indexed-memory.txt"
+
+printf 'PASS x301_keygen=fixed-base base_select_sites=%s affine_add_sites=%s double_sites=%s inversion_sites=%s\n' \
+    "$base_select_calls" "$affine_add_calls" "$double_calls" "$invert_calls" \
+    | tee -a "$SUMMARY"
+
 # Checker negative control: a synthetic conditional edge must be rejected.
 NEGATIVE=$EVIDENCE/negative-control.asm
 /usr/bin/awk '{ print } END { print "deadbeef: jne deadbeef" }' \
@@ -218,7 +288,8 @@ printf 'PASS x301_ladder_rounds=301 loop_branches=1 cmov=%s indexed_reads=1\n' \
 printf '%s\n' \
     'PASS field_backend=ed301_eddsa::field_5x64 branch_free=1' \
     'PASS negative_control=conditional-edge-rejected' | tee -a "$SUMMARY"
-/usr/bin/sha256sum "$MODULE" "$DUMP" "$X301" "$LOOP" "$SUMMARY" \
+/usr/bin/sha256sum "$MODULE" "$DUMP" "$X301" "$LOOP" "$PUBLIC" \
+    "$BASE_SELECT" "$AFFINE_SELECT" "$SUMMARY" \
     >"$EVIDENCE/SHA256SUMS"
 printf 'PASS x301_final_codegen module_sha256=%s evidence=%s\n' \
     "$(/usr/bin/sha256sum "$MODULE" | /usr/bin/awk '{ print $1 }')" \

@@ -1,0 +1,62 @@
+{
+  "source_sha256": "61514b856d8b96e4c3c52234f23021c08bc4ff87a20492489070e18330f11f59",
+  "source_name": "X301_PERF_SEED.json",
+  "purpose": "Independent K1 clamped-scalar reduction vectors",
+  "L_le_hex": "0396bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008",
+  "vectors": [
+    {
+      "clamped_k_le_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000010",
+      "k_mod_L_le_hex": "fd69412f5e1cfdd9ceb504b8677f6df73723e9ffffffffffffffffffffffffffffffffffff07",
+      "label": "min_clamped (1L)",
+      "subtracted_multiples_of_L": 1
+    },
+    {
+      "clamped_k_le_hex": "fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1f",
+      "k_mod_L_le_hex": "f33dc48d1a55f78d6c210e28377e48e6a769bbffffffffffffffffffffffffffffffffffff07",
+      "label": "max_clamped (3L)",
+      "subtracted_multiples_of_L": 3
+    },
+    {
+      "clamped_k_le_hex": "042c7da143c7054c6294f68f3001251190b92d00000000000000000000000000000000000010",
+      "k_mod_L_le_hex": "0196bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008",
+      "label": "knapp_unter_2L (1L, groesster Rest)",
+      "subtracted_multiples_of_L": 1
+    },
+    {
+      "clamped_k_le_hex": "0c2c7da143c7054c6294f68f3001251190b92d00000000000000000000000000000000000010",
+      "k_mod_L_le_hex": "0600000000000000000000000000000000000000000000000000000000000000000000000000",
+      "label": "knapp_ueber_2L (2L, kleiner Rest)",
+      "subtracted_multiples_of_L": 2
+    },
+    {
+      "clamped_k_le_hex": "08c23b72e5aa087293def1d7c881b71958964400000000000000000000000000000000000018",
+      "k_mod_L_le_hex": "0296bed0a1e30226314afb4798809208c8dc1600000000000000000000000000000000000008",
+      "label": "knapp_unter_3L (2L, groesster Rest)",
+      "subtracted_multiples_of_L": 2
+    },
+    {
+      "clamped_k_le_hex": "10c23b72e5aa087293def1d7c881b71958964400000000000000000000000000000000000018",
+      "k_mod_L_le_hex": "0700000000000000000000000000000000000000000000000000000000000000000000000000",
+      "label": "knapp_ueber_3L (3L, kleiner Rest)",
+      "subtracted_multiples_of_L": 3
+    },
+    {
+      "clamped_k_le_hex": "fca53cf245fd76b7ccdfb10c67ae11ecf6702600000000000000000000000000000000000010",
+      "k_mod_L_le_hex": "f90f7e21a41974919b95b6c4ce2d7fe32e940f00000000000000000000000000000000000008",
+      "label": "konstruiert_1L (Zufall unerreichbar)",
+      "subtracted_multiples_of_L": 1
+    },
+    {
+      "clamped_k_le_hex": "1477d8adde90749dffb26cd6acbe4d9223765f3e08acf3d23062e92a4db86027fcb0b01eb414",
+      "k_mod_L_le_hex": "0e4b5b0c9bc96e519d1e76467cbd288193bc313e08acf3d23062e92a4db86027fcb0b01eb404",
+      "label": "zufall_2L",
+      "subtracted_multiples_of_L": 2
+    },
+    {
+      "clamped_k_le_hex": "344a339e1e563b3e4ee954a74c332464be563ed18e599a683a6b5e1caaf6620eb16ff618d01d",
+      "k_mod_L_le_hex": "2b88f72b39ab32ccba0a63cf83b16c4a66c0f9d08e599a683a6b5e1caaf6620eb16ff618d005",
+      "label": "zufall_3L",
+      "subtracted_multiples_of_L": 3
+    }
+  ]
+}
