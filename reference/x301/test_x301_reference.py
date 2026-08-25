@@ -7,12 +7,17 @@ import copy
 import importlib.util
 import json
 import pathlib
+import subprocess
 import sys
 import unittest
 from unittest import mock
 
 VECTOR_PATH = pathlib.Path(__file__).with_name("x301-test-vectors.json")
+LONG_VECTOR_PATH = pathlib.Path(__file__).with_name("x301-long-iteration.json")
 REFERENCE_PATH = pathlib.Path(__file__).with_name("x301_reference.py")
+CORPUS_GENERATOR_PATH = pathlib.Path(__file__).with_name(
+    "generate_adversarial_corpus.py"
+)
 
 
 def _load_reference_module():
@@ -34,6 +39,7 @@ class X301ReferenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.vectors = json.loads(VECTOR_PATH.read_text(encoding="utf-8"))
+        cls.long_vector = json.loads(LONG_VECTOR_PATH.read_text(encoding="utf-8"))
 
     def test_parameter_derivation_and_basepoint(self) -> None:
         self.assertEqual(ref.P % 4, 3)
@@ -85,6 +91,20 @@ class X301ReferenceTests(unittest.TestCase):
             self.vectors["t2"]["after_1000_hex"],
         )
 
+    def test_l1_long_fixture_has_the_separate_exact_contract(self) -> None:
+        self.assertEqual(
+            self.long_vector["schema"],
+            "x301-rfc7748-style-long-iteration-v1",
+        )
+        self.assertEqual(self.long_vector["iterations"], 1_000_000)
+        self.assertEqual(
+            self.long_vector["initial_scalar_and_u_hex"],
+            ref.BASE_U_ENCODING.hex(),
+        )
+        result = bytes.fromhex(self.long_vector["result_hex"])
+        self.assertEqual(len(result), ref.FIELD_BYTES)
+        self.assertEqual(ref.encode_u(ref.decode_u(result)), result)
+
     def test_t4_complete_small_order_derivation(self) -> None:
         self.assertEqual(ref.derive_small_order_corpus(), self.vectors["t4"])
         secret_domains = [
@@ -102,6 +122,28 @@ class X301ReferenceTests(unittest.TestCase):
 
     def test_t5_frozen_ten_thousand_case_digest(self) -> None:
         ref.validate_vector_document(self.vectors)
+
+    def test_w1_w6_adversarial_corpus_regenerates_byte_identically(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-O",
+                str(CORPUS_GENERATOR_PATH),
+                "--check",
+            ],
+            check=False,
+            cwd=CORPUS_GENERATOR_PATH.parent,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+        )
 
     def test_negative_control_rejects_mutated_constant(self) -> None:
         with mock.patch.object(ref, "MONTGOMERY_A", ref.MONTGOMERY_A + 1):

@@ -60,7 +60,9 @@ The provider is an integration candidate, not a release.  See
 The local X301 integration adds a distinct raw `X301` KEYMGMT/KEYEXCH and an
 opt-in `X301MLKEM1024` TLS 1.3 group. The latter delegates ML-KEM-1024 entirely
 to OpenSSL's default provider and supplies no standalone hybrid format or KDF.
-Its project contract is `docs/X301_DRAFT.md`.
+Its project contract is `docs/X301_DRAFT.md`; the additive Wycheproof/OpenSSL
+taxonomy, structured-sweep and long-running lane is documented in
+`docs/X301_EXTENDED_ASSURANCE.md`.
 
 After authenticating sealed OpenSSL 3.5.7 and 4.0.1 lanes, run the dual-lane
 provider and TLS matrices with the lane roots and their external evidence
@@ -74,6 +76,10 @@ scripts/test-x301-tls.sh \
     /trusted/openssl-3.5.7-lane <3.5.7-evidence-sha256> \
     /trusted/openssl-4.0.1-lane <4.0.1-evidence-sha256>
 ```
+
+Set `X301_TLS_LONG_HANDSHAKES=1000` for the separate L2 handshake lane.  From
+the same authenticated read-only source snapshot, run
+`scripts/check-x301-long.sh` for L1's one-million iteration reproduction.
 
 The private NamedGroup `0xFE2E` is test-only and not an IANA allocation.
 X301/X301MLKEM1024 remain experimental assurance candidates, not production

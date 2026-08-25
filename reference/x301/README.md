@@ -14,7 +14,8 @@ The oracle has six deliberately separate jobs:
    through the associated Weierstrass model, then checks deterministic random
    round trips and homomorphisms.
 3. T2 applies the RFC 7748 iteration-test state update and freezes the results
-   after one and 1,000 iterations.
+   after one and 1,000 iterations. L1 keeps the one-million result in the
+   separate `x301-long-iteration.json` fixture so ordinary tests stay bounded.
 4. T3 separates strict noncanonical, reserved-bit and wrong-length failures.
 5. T4 derives all rational order-2 and order-4 x-lines algebraically and
    classifies the order-4 lines between the main curve and the twist by their
@@ -34,6 +35,21 @@ Validate a frozen fixture, including recomputation of all 10,000 T5 records:
 ```sh
 python3 -I -B -O reference/x301/x301_reference.py verify-vectors \
   --path reference/x301/x301-test-vectors.json
+```
+
+Run the deliberately slow L1 reproduction (about tens of minutes in the
+standard-library Python oracle):
+
+```sh
+python3 -I -B -O reference/x301/x301_reference.py verify-long-iteration \
+  --path reference/x301/x301-long-iteration.json
+```
+
+Regenerate the same canonical JSON on standard output:
+
+```sh
+python3 -I -B -O reference/x301/x301_reference.py emit-long-iteration \
+  --count 1000000
 ```
 
 Stream the T5 records for a differential consumer:

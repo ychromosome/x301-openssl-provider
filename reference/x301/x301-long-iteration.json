@@ -1,0 +1,8 @@
+{
+  "initial_scalar_and_u_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+  "iterations": 1000000,
+  "result_hex": "14ab929a330ac560c738369f025c046ab422731b8c562b6769e2ced5a2054ff6746ec52b9b00",
+  "schema": "x301-rfc7748-style-long-iteration-v1",
+  "source": "RFC 7748 Section 5 iteration-test state update, translated by docs/X301_DRAFT.md",
+  "warning": "variable-time test oracle; never use with production secrets"
+}

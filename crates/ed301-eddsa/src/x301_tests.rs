@@ -42,6 +42,9 @@ const ITERATION_ONE: [u8; X301_BYTES] = decode_hex_array(
 const ITERATION_THOUSAND: [u8; X301_BYTES] = decode_hex_array(
     b"8684cf6cebf163576e535abaf21f539129f31498e18e97abb0cf736ed9dd703cdd28768fd915",
 );
+const ITERATION_MILLION: [u8; X301_BYTES] = decode_hex_array(
+    b"14ab929a330ac560c738369f025c046ab422731b8c562b6769e2ced5a2054ff6746ec52b9b00",
+);
 const MODULUS: [u8; PUBLIC_BYTES] = decode_hex_array(
     b"b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
 );
@@ -88,6 +91,122 @@ fn deterministic_pairs_commute() {
 }
 
 #[test]
+fn wycheproof_style_adversarial_corpus_matches_the_x301_contract() {
+    let document: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../reference/x301/x301-wycheproof-corpus.json"
+    ))
+    .expect("the generated adversarial corpus parses");
+    let cases = document["cases"]
+        .as_array()
+        .expect("the adversarial corpus has a case array");
+    assert_eq!(
+        document["schema"].as_str(),
+        Some("x301-wycheproof-taxonomy-v1")
+    );
+    assert_eq!(document["case_count"].as_u64(), Some(559));
+    assert_eq!(
+        document["case_sha256"].as_str(),
+        Some("519724ffa7c2cbd205f40203be02e0fb092325ecaaf6e10f34a41bbac1640b62")
+    );
+    assert_eq!(cases.len(), 559);
+
+    let mut family_counts = std::collections::BTreeMap::<&str, usize>::new();
+    for case in cases {
+        let tc_id = case["tcId"].as_u64().expect("numeric tcId");
+        let family = case["family"].as_str().expect("case family");
+        let operation = case["operation"].as_str().expect("case operation");
+        let expected = case["expected"].as_str().expect("case expectation");
+        let expected_error = case["expected_error"].as_str().expect("error code");
+        let secret = decode_runtime_hex_vec(case["secret_hex"].as_str().expect("hex secret"));
+        let public = decode_runtime_hex_vec(case["public_hex"].as_str().expect("hex public input"));
+        let expected_output = decode_runtime_hex_vec(
+            case["expected_output_hex"]
+                .as_str()
+                .expect("hex expected output"),
+        );
+        *family_counts.entry(family).or_default() += 1;
+
+        match (operation, expected) {
+            ("derive", "valid") => {
+                let output = x301(&secret, &public)
+                    .unwrap_or_else(|error| panic!("tcId {tc_id}: {error:?}"));
+                assert_eq!(
+                    &output.as_bytes()[..],
+                    expected_output.as_slice(),
+                    "tcId {tc_id}"
+                );
+            }
+            ("derive", "invalid") => assert_eq!(
+                x301(&secret, &public).err(),
+                Some(adversarial_error(expected_error)),
+                "tcId {tc_id}"
+            ),
+            ("public_from_secret", "valid") => assert_eq!(
+                public_from_secret(&secret)
+                    .unwrap_or_else(|error| panic!("tcId {tc_id}: {error:?}"))
+                    .as_slice(),
+                expected_output.as_slice(),
+                "tcId {tc_id}"
+            ),
+            ("public_from_secret", "invalid") => assert_eq!(
+                public_from_secret(&secret).err(),
+                Some(adversarial_error(expected_error)),
+                "tcId {tc_id}"
+            ),
+            _ => panic!("tcId {tc_id}: unsupported operation/expectation"),
+        }
+    }
+
+    assert_eq!(family_counts.get("W1-LowOrderPublic"), Some(&3));
+    assert_eq!(family_counts.get("W2-TwistPublic"), Some(&8));
+    assert_eq!(family_counts.get("W3-NonCanonicalPublic"), Some(&10));
+    assert_eq!(family_counts.get("W4-SpecialScalars"), Some(&8));
+    assert_eq!(family_counts.get("W5-SharedSecretEdges"), Some(&8));
+    assert_eq!(family_counts.get("W6-LengthAndType"), Some(&10));
+    assert_eq!(family_counts.get("W-RandomValid"), Some(&512));
+}
+
+#[test]
+#[ignore = "explicit P1-P4 1000-case property gate; run in release mode"]
+fn x301_properties_hold_for_1000_deterministic_cases() {
+    let mut state = 0x3010_7072_6f70_0001_u64;
+    for case in 0..1000 {
+        let secret_a = random_secret(&mut state);
+        let secret_b = random_secret(&mut state);
+
+        // P3: D3 clamping is idempotent and enforces the exact bit contract.
+        let clamped = clamped_scalar_for_test(&secret_a);
+        assert_eq!(clamped_scalar_for_test(&clamped), clamped, "case {case}");
+        assert_eq!(clamped[0] & 3, 0, "case {case}");
+        assert_eq!(clamped[SECRET_BYTES - 1] & 0xe0, 0, "case {case}");
+        assert_ne!(clamped[SECRET_BYTES - 1] & 0x10, 0, "case {case}");
+
+        let public_a = public_from_secret(&secret_a).expect("P1 public A");
+        let public_b = public_from_secret(&secret_b).expect("P1 public B");
+
+        // P4: every generated public value is strict-canonical and a
+        // decode/encode roundtrip preserves its exact 38-byte encoding.
+        validate_public_encoding(&public_a).expect("P4 canonical public");
+        let decoded = Fe301::from_canonical_bytes(&public_a).expect_copied("P4 public decodes");
+        assert_eq!(decoded.to_canonical_bytes(), public_a, "case {case}");
+
+        // P1: XDH commutativity for independently generated scalar pairs.
+        let shared_a = shared_secret(&secret_a, &public_b).expect("P1 A with B");
+        let shared_b = shared_secret(&secret_b, &public_a).expect("P1 B with A");
+        assert_eq!(shared_a.as_bytes(), shared_b.as_bytes(), "case {case}");
+
+        // P2: the public X301 base multiplication agrees with the D1
+        // birational image of the existing Edwards scalar multiplication.
+        let edwards = EdwardsPoint::BASEPOINT.scalar_mul_pruned(&clamped);
+        let encoded = edwards
+            .encode_public_artifact()
+            .expect("P2 Edwards result encodes");
+        let mapped = edwards_y_to_montgomery_u(y_from_edwards_encoding(encoded));
+        assert_eq!(mapped.to_canonical_bytes(), public_a, "case {case}");
+    }
+}
+
+#[test]
 fn rfc_style_iteration_results_are_frozen_at_one_and_one_thousand() {
     let mut scalar = BASE_U_BYTES;
     let mut u = BASE_U_BYTES;
@@ -101,6 +220,20 @@ fn rfc_style_iteration_results_are_frozen_at_one_and_one_thousand() {
         }
     }
     assert_eq!(scalar, ITERATION_THOUSAND);
+}
+
+#[test]
+#[ignore = "explicit L1 one-million iteration gate; run in release mode"]
+fn rfc_style_iteration_result_is_frozen_at_one_million() {
+    let mut scalar = BASE_U_BYTES;
+    let mut u = BASE_U_BYTES;
+    for _ in 0..1_000_000 {
+        let old_scalar = scalar;
+        let output = x301(&old_scalar, &u).expect("iteration remains nonzero");
+        scalar = *output.as_bytes();
+        u = old_scalar;
+    }
+    assert_eq!(scalar, ITERATION_MILLION);
 }
 
 #[test]
@@ -385,6 +518,25 @@ fn decode_runtime_hex(value: &str) -> [u8; X301_BYTES] {
             | hex_nibble(value.as_bytes()[index * 2 + 1]);
     }
     output
+}
+
+fn decode_runtime_hex_vec(value: &str) -> Vec<u8> {
+    assert_eq!(value.len() % 2, 0, "hex input has complete bytes");
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]))
+        .collect()
+}
+
+fn adversarial_error(code: &str) -> X301Error {
+    match code {
+        "secret_length" => X301Error::InvalidSecretLength,
+        "length" => X301Error::InvalidPublicLength,
+        "noncanonical" | "reserved_bits" => X301Error::NonCanonicalPublic,
+        "all_zero" => X301Error::AllZeroSharedSecret,
+        _ => panic!("unknown adversarial error code: {code}"),
+    }
 }
 
 fn hex_nibble(value: u8) -> u8 {

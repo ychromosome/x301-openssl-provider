@@ -15,6 +15,12 @@ Before proposing a change:
 5. run `sh scripts/check.sh` and, where Valgrind is available,
    `sh scripts/check-secret-taint.sh`.
 
+Changes to X301 or X301MLKEM1024 additionally require the dual-lane provider
+and TLS entry points in `docs/X301_EXTENDED_ASSURANCE.md`.  Run
+`scripts/check-x301-long.sh` when the ladder, field use, clamping, basepoint or
+frozen long vector changes; it is deliberately excluded from an ordinary
+developer test loop.
+
 Do not submit production-readiness, audit, constant-time-completion,
 zeroization-completion or standards claims without corresponding independent
 evidence.

@@ -11,6 +11,13 @@
   ML-KEM first without a project KDF, and no standalone hybrid profile is
   defined. Dual OpenSSL 3.5.7/4.0.1 provider, TLS, lifecycle, failure, taint and
   code-generation gates bind the experimental integration.
+- Added the extended X301 assurance lane: a frozen 559-case
+  Wycheproof-taxonomy corpus, native OpenSSL `evp_test` data, 1,000-case
+  deterministic properties, complete KEYEXCH state/failpoint tests,
+  bidirectional 3.5.7/4.0.1 TLS interoperation, HRR and fragmentation,
+  192 wire mutations per lane, finite 55,100-case provider-entry sweeps under
+  ASan/UBSan, a separate one-million iteration target, and 1,000 full hybrid
+  handshakes per lane with reduced Valgrind repetition.
 - Integrated the independently produced Package-A Python implementation as a
   hash-bound, immutable test oracle after its 109/109 Package-B blind result.
   A narrow adapter accepts only immutable byte strings and exposes no raw

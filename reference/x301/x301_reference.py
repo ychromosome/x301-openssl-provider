@@ -382,6 +382,33 @@ def iteration_result(count: int) -> bytes:
     return scalar
 
 
+def long_iteration_document(count: int = 1_000_000) -> dict[str, object]:
+    """Compute the separately gated RFC-7748-shaped L1 fixture."""
+
+    return {
+        "schema": "x301-rfc7748-style-long-iteration-v1",
+        "warning": "variable-time test oracle; never use with production secrets",
+        "source": "RFC 7748 Section 5 iteration-test state update, translated by docs/X301_DRAFT.md",
+        "iterations": count,
+        "initial_scalar_and_u_hex": BASE_U_ENCODING.hex(),
+        "result_hex": iteration_result(count).hex(),
+    }
+
+
+def validate_long_iteration_document(document: object) -> None:
+    """Recompute and validate the separate L1 long-running fixture."""
+
+    validate_parameters()
+    if not isinstance(document, dict):
+        raise EvidenceError("L1 document is not an object")
+    count = document.get("iterations")
+    if not isinstance(count, int) or isinstance(count, bool) or count != 1_000_000:
+        raise EvidenceError("L1 iteration count is not exactly one million")
+    expected = long_iteration_document(count)
+    if document != expected:
+        raise EvidenceError("L1 one-million iteration block mismatch")
+
+
 def derive_small_order_corpus() -> dict[str, object]:
     """Derive every affine x-line of rational order 2 or 4.
 
@@ -745,8 +772,16 @@ def _main(argv: list[str]) -> int:
     verify_parser.add_argument(
         "--path", type=Path, default=Path(__file__).with_name("x301-test-vectors.json")
     )
+    verify_long_parser = subparsers.add_parser("verify-long-iteration")
+    verify_long_parser.add_argument(
+        "--path",
+        type=Path,
+        default=Path(__file__).with_name("x301-long-iteration.json"),
+    )
     vectors_parser = subparsers.add_parser("emit-vectors")
     vectors_parser.add_argument("--corpus-count", type=int, default=10_000)
+    long_parser = subparsers.add_parser("emit-long-iteration")
+    long_parser.add_argument("--count", type=int, default=1_000_000)
     corpus_parser = subparsers.add_parser("emit-corpus")
     corpus_parser.add_argument("--count", type=int, default=10_000)
     digest_parser = subparsers.add_parser("corpus-digest")
@@ -764,8 +799,17 @@ def _main(argv: list[str]) -> int:
         validate_vector_document(document)
         print("x301_independent_vectors=PASS corpus_cases=10000")
         return 0
+    if args.command == "verify-long-iteration":
+        document = json.loads(args.path.read_text(encoding="utf-8"))
+        validate_long_iteration_document(document)
+        print("x301_long_iteration=PASS iterations=1000000")
+        return 0
     if args.command == "emit-vectors":
         json.dump(computed_vector_document(args.corpus_count), sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
+    if args.command == "emit-long-iteration":
+        json.dump(long_iteration_document(args.count), sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
         return 0
     if args.command == "emit-corpus":

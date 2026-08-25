@@ -378,7 +378,8 @@ variable-time oracle. It imports neither Rust/product code nor provider output.
 
 - four T1 scalar/u KATs, including basepoint cases independently cross-checked
   through complete Edwards scalar multiplication, and exact clamped bytes;
-- T2 results after 1 and 1,000 RFC-shaped iterations;
+- T2 results after 1 and 1,000 RFC-shaped iterations, plus the separately
+  gated L1 result after 1,000,000 iterations;
 - separate T3 strict-canonical boundary cases;
 - the independently derived complete T4 affine x-line corpus;
 - the SHA-256, first record and last record of a canonical 10,000-case T5
@@ -413,14 +414,42 @@ a standards-conformance claim:
 | T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | PASS on both exact lanes, including fresh component digests across resumption, fallback and no-common-group failure |
 | T9 | ML-KEM mutation, all-zero X301 and boundary mutations | PASS on both exact lanes; wire mutation fails protected-record authentication without an explicit KEM error |
 | T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | PASS: 35 ML-KEM-1024 cases/105 checks on 3.5.7 and 36 cases/108 checks on 4.0.1 |
-| T11 | add `x301-derive` while preserving the existing public/sign cases, each in defined and tainted mode | PASS: all six cases on the read-only archive of commit `3942e59feafa791a5d40b5eab7a5cf017021e72f`; source manifest `151d014d40f864fc86bd8c4a7e00c5bb1eee15ca2189fb29c9f22ae6a21728b6` |
+| T11 | add `x301-derive` while preserving the existing public/sign cases, each in defined and tainted mode | PASS: all six cases on the final read-only archive snapshot; its externally anchored source-manifest digest is recorded in the sealed result bundle |
 | T12 | ladder/cswap/field disassembly gate | PASS on both final provider modules: 301 rounds, one fixed loop edge, 64 `cmov`, one public-index scalar read |
-| T13 | scalar, ladder-state and shared-secret zeroization | PASS for the named-owner boundary; all six dual-lane provider Valgrind runs are clean |
+| T13 | scalar, ladder-state and shared-secret zeroization | PASS for the named-owner boundary; direct/hybrid EVP lifecycle and reduced long-handshake lanes are Valgrind-clean on both OpenSSL versions |
 
-The current core run has 44 default-feature tests and 53 `x301` tests in both
-debug and release, plus the separately executed ignored 10,000-case test. The
-independent oracle has 10 tests. Each OpenSSL lane has 10 raw-X301, 16 hybrid
-and 8 key-separation harness checks in addition to its native ML-KEM data.
+### 10.1 Extended adversarial assurance
+
+The optional extended lane adapts test *taxonomies* from Wycheproof and
+OpenSSL, never their X25519/X448 expected bytes.  Its expected X301 values
+come only from the independent Python oracle or from the contracts cited in
+each harness.  It adds no production dependency and no `unsafe` block.
+
+| Family | Frozen or executable coverage | Current status |
+| --- | --- | --- |
+| W1-W6 | 47 semantic cases plus 512 deterministic oracle-generated valid cases; generated JSON and C header reproduce byte-for-byte | PASS in Python, Rust and both EVP lanes |
+| O1-O2 | OpenSSL `evp_test`-format KAT, pairwise, missing-peer and wrong-peer cases | PASS: 36 native `evp_test` cases with zero errors on each lane; the raw-length grammar boundary is recorded as `X-O2` |
+| P1-P4 | 1,000 deterministic commutativity, birational, clamping and canonical-encoding cases | PASS in the release Rust gate; EVP commutativity and strict decoding are also exercised on both lanes |
+| M1-M6 | peer replacement, repeat derive, `dupctx`, re-init/key replacement, four-thread sharing and allocation/panic failure injection | PASS on both lanes; the four workers perform 1,000 derives per lane and the direct/hybrid lifecycle harnesses are Valgrind-clean |
+| R1-R7 | bidirectional cross-lane interop, HRR, 512-byte record fragmentation, fallback/no-common-group, 192 wire mutations per lane, foreign-size rejection and fresh resumption shares | PASS on both lanes and both cross-lane directions |
+| F1-F4 | complete declared structured fallback sweep because `cargo-fuzz` and AFL++ were unavailable | PASS per lane: 19,762 raw/decode/derive cases plus 35,338 hybrid-parser cases, all repeated with ASan+UBSan on the C provider boundary and harnesses |
+| L1 | RFC-7748-shaped one-million iteration target with independently frozen output | PASS: Python oracle and release Rust core agree byte-for-byte on `14ab929a...52b9b00` |
+| L2 | 1,000 complete X301MLKEM1024 handshakes per lane plus six Valgrind reconnects per lane | PASS: 2,000 full handshakes and 12 Valgrind connections |
+
+F4's sanitizer claim is deliberately narrow: stable Rust has no supported
+whole-crate sanitizer switch.  The C shim, hybrid parser and C harness are
+instrumented; Rust/FFI memory and secret-flow coverage remains the independent
+Valgrind/T11 lane.  The deterministic F sweep is complete for its explicitly
+declared length, deletion, insertion, bit and byte-value grids; it is not a
+coverage-guided fuzzing claim.
+
+The current core run has 44 default-feature tests and 57 `x301` tests in both
+debug and release, plus the separately executed ignored 1,000-property,
+10,000-case differential and 1,000,000-iteration tests. The independent oracle
+has 12 ordinary tests plus the separate slow L1 recomputation. Each OpenSSL
+lane runs the raw-X301, hybrid, key-separation, state-machine, failure,
+structured-sweep and native ML-KEM data matrices with their individual counts
+recorded in the sealed result bundle.
 `fmt`, `clippy -D warnings`, rustdoc, both feature states, GCC `-fanalyzer`,
 Clang static analysis, final codegen and the materialized twist evidence in
 Section 8 pass. The final T11 run additionally verifies the source tree both

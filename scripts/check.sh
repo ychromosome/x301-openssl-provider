@@ -59,11 +59,23 @@ cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
 cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets \
     --features sign-self-verify -- -D warnings
+cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --workspace --all-targets \
+    --features x301 -- -D warnings
+cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --workspace --all-targets \
+    --features x301,sign-self-verify -- -D warnings
 cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets
 cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets \
     --features sign-self-verify
+cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --workspace --all-targets \
+    --features x301
+cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --workspace --all-targets \
+    --features x301,sign-self-verify
 
 clean_env /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
 (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
@@ -85,6 +97,39 @@ clean_env /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
         --manifest-path "$ROOT/Cargo.toml" --locked --offline \
         --release --workspace --all-targets \
         --features sign-self-verify)
+(cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$TARGET_DIR" \
+    CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+    ED301_PROFILE_MARKER_DIR="$MARKERS" \
+    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+    RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+    /usr/bin/cargo test \
+        --manifest-path "$ROOT/Cargo.toml" --locked --offline \
+        --release --workspace --all-targets \
+        --features x301)
+(cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    CARGO_HOME="$CARGO_HOME_DIR" CARGO_TARGET_DIR="$TARGET_DIR" \
+    CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CCACHE_DISABLE=1 \
+    ED301_PROFILE_MARKER_DIR="$MARKERS" \
+    ED301_PROFILE_EXCEPTIONS=crypto_bigint=off \
+    RUSTC_WRAPPER="$ROOT/scripts/rustc-profile-guard.sh" \
+    /usr/bin/cargo test \
+        --manifest-path "$ROOT/Cargo.toml" --locked --offline \
+        --release --workspace --all-targets \
+        --features x301,sign-self-verify)
+
+# X301's bounded property and independent 10,000-case differential lanes are
+# intentionally ignored in ordinary `cargo test`, but they are mandatory in
+# this authoritative gate.  L1's one-million iteration vector remains a
+# separate explicitly slow target.
+cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --release --workspace --features x301 \
+    x301_tests::x301_properties_hold_for_1000_deterministic_cases \
+    -- --ignored --exact
+cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --release --workspace --features x301 \
+    x301_tests::x301_python_oracle_matches_10000_cases_and_torsion_derivation \
+    -- --ignored --exact
 sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
     crypto_bigint=off ed301_eddsa=on
 
@@ -94,7 +139,7 @@ sh "$ROOT/scripts/check-profile-markers.sh" "$MARKERS" \
     RUSTDOCFLAGS='-D warnings' \
     /usr/bin/cargo doc \
         --manifest-path "$ROOT/Cargo.toml" --locked --offline \
-        --workspace --no-deps)
+        --workspace --no-deps --features x301,sign-self-verify)
 
 sh "$ROOT/scripts/check-downstream.sh"
 sh "$ROOT/scripts/require-verified-snapshot.sh"
