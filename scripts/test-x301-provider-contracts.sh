@@ -38,11 +38,13 @@ record_run_identity() {
         find Cargo.toml Cargo.lock \
             crates/ed301-eddsa/Cargo.toml crates/ed301-eddsa/src \
             docs/X301_DRAFT.md docs/X301_CONSTRUCTION_REGISTER.md \
+            docs/X301_EXTENDED_ASSURANCE.md \
             docs/OPENSSL_PATTERN_DEVIATIONS.md docs/OID_REGISTRY.md \
             provider/Cargo.toml provider/Cargo.lock \
             provider/crates/x301-provider provider-tests/x301 reference/x301 \
             secret-taint/Cargo.toml secret-taint/src \
-            scripts/check-secret-taint.sh scripts/check-x301-final-codegen.sh \
+            scripts/check.sh scripts/check-secret-taint.sh \
+            scripts/check-x301-final-codegen.sh scripts/check-x301-long.sh \
             scripts/test-x301-provider-contracts.sh scripts/test-x301-tls.sh \
             scripts/verify-openssl-provider-lane.sh \
             -type f -exec sha256sum {} + | sort -k2
@@ -58,6 +60,18 @@ record_run_identity() {
         printf '3.5.7\t%s\t%s\n' "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
         printf '4.0.1\t%s\t%s\n' "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
     } >"$RESULT_ROOT/RUN_INPUTS.tsv"
+    {
+        printf 'libfuzzer_cargo_fuzz=%s\n' \
+            "$(command -v cargo-fuzz 2>/dev/null || printf NOT_INSTALLED)"
+        printf 'afl_plus_plus=%s\n' \
+            "$(command -v afl-fuzz 2>/dev/null || printf NOT_INSTALLED)"
+        printf '%s\n' \
+            'selected=complete_deterministic_structured_sweep' \
+            'raw_scope=lengths_0_76;all_delete_insert_positions;all_byte_values_at_all_38_positions' \
+            'hybrid_scope=lengths_0_1607;all_bits;all_delete_insert_positions' \
+            'semantic_seeds=frozen_W1_W6_plus_512_independent_oracle_cases' \
+            'time_substitution=not_used_complete_defined_sweep_executed'
+    } >"$RESULT_ROOT/FUZZING_STRATEGY.txt"
 }
 
 run_lane() {
@@ -69,8 +83,13 @@ run_lane() {
     local build=$RESULT_ROOT/$lane
     local target=$build/target
     local modules=$build/modules
+    local failpoint_modules=$build/modules-failpoint
+    local sanitizer_modules=$build/modules-sanitizer
+    local sanitizer_target=$build/target-sanitizer
     local cargo_home=$build/cargo-home
     local data=$source/test/recipes/30-test_evp_data/evppkey_ml_kem_encap_decap.txt
+    local x301_evp_data=$ROOT/provider-tests/x301/openssl_evp_x301.txt
+    local x301_evp_config=$ROOT/provider-tests/x301/openssl_evp_x301.cnf
     local mlkem1024_cases
 
     "$ROOT/scripts/verify-openssl-provider-lane.sh" \
@@ -78,7 +97,11 @@ run_lane() {
     test -x "$prefix/bin/openssl"
     test -x "$source/test/evp_test"
     test -f "$data"
-    mkdir -m 700 -p "$target" "$modules" "$cargo_home" "$build/bin"
+    test -f "$x301_evp_data"
+    test -f "$x301_evp_config"
+    mkdir -m 700 -p \
+        "$target" "$sanitizer_target" "$modules" "$failpoint_modules" \
+        "$sanitizer_modules" "$cargo_home" "$build/bin"
 
     printf 'lane=%s\nprefix=%s\nsource=%s\nbuild=%s\n' \
         "$lane" "$prefix" "$source" "$build"
@@ -118,7 +141,65 @@ run_lane() {
     cp "$target/release/libed301_eddsa_draft00.so" \
         "$modules/ed301_eddsa_draft00.so"
 
-    /usr/bin/gcc -std=c11 -Wall -Wextra -Werror \
+    # M6 uses a separately copied, test-only Rust failpoint artifact.  The
+    # ordinary module must remain byte-free of both environment-hook names.
+    (
+        cd "$ROOT/provider"
+        env -i PATH=/usr/bin:/bin HOME="$build" LC_ALL=C \
+            CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
+            CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            CC=/usr/bin/gcc AR=/usr/bin/ar \
+            X301_HERMETIC_PROVIDER_BUILD=1 \
+            OPENSSL_INCLUDE_DIR="$prefix/include" \
+            OPENSSL_LIB_DIR="$prefix/lib" \
+            LD_LIBRARY_PATH="$prefix/lib" \
+            /usr/bin/cargo build --release --locked --offline \
+                -p x301-provider \
+                --features tls-x301-mlkem1024,test-failpoint
+    )
+    cp "$target/release/libx301.so" "$failpoint_modules/x301.so"
+    if /usr/bin/strings "$modules/x301.so" \
+            | grep -E 'X301_PROVIDER_(PANIC|ALLOC)_FAILPOINT' >/dev/null; then
+        printf 'ordinary X301 module contains a test failpoint hook\n' >&2
+        exit 1
+    fi
+    /usr/bin/strings "$failpoint_modules/x301.so" \
+        | grep -F X301_PROVIDER_PANIC_FAILPOINT >/dev/null
+    /usr/bin/strings "$failpoint_modules/x301.so" \
+        | grep -F X301_PROVIDER_ALLOC_FAILPOINT >/dev/null
+
+    # F4: test-only C-boundary/hybrid-parser instrumentation in the provider
+    # DSO.  Stable rustc supplies no supported whole-crate sanitizer switch;
+    # the Rust core is covered independently by Valgrind and T11 taint.
+    (
+        cd "$ROOT/provider"
+        env -i PATH=/usr/bin:/bin HOME="$build" LC_ALL=C \
+            CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$sanitizer_target" \
+            CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            CC=/usr/bin/gcc AR=/usr/bin/ar \
+            X301_HERMETIC_PROVIDER_BUILD=1 \
+            OPENSSL_INCLUDE_DIR="$prefix/include" \
+            OPENSSL_LIB_DIR="$prefix/lib" \
+            LD_LIBRARY_PATH="$prefix/lib" \
+            /usr/bin/cargo build --release --locked --offline \
+                -p x301-provider \
+                --features tls-x301-mlkem1024,test-sanitizer
+    )
+    cp "$sanitizer_target/release/libx301.so" \
+        "$sanitizer_modules/x301.so"
+    /usr/bin/readelf -d "$sanitizer_modules/x301.so" \
+        >"$build/sanitizer-provider.dynamic.txt"
+    /usr/bin/nm -D "$sanitizer_modules/x301.so" \
+        >"$build/sanitizer-provider.nm.txt"
+    grep -E 'NEEDED.*libasan' "$build/sanitizer-provider.dynamic.txt" \
+        >/dev/null
+    grep -E 'NEEDED.*libubsan' "$build/sanitizer-provider.dynamic.txt" \
+        >/dev/null
+    grep -E ' U __asan_init' "$build/sanitizer-provider.nm.txt" >/dev/null
+    grep -E ' U __ubsan_handle_' "$build/sanitizer-provider.nm.txt" \
+        >/dev/null
+
+    /usr/bin/gcc -std=c11 -Wall -Wextra -Werror -pthread \
         -I"$prefix/include" \
         "$ROOT/provider-tests/x301/provider_x301_contract.c" \
         -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
@@ -133,12 +214,28 @@ run_lane() {
         "$ROOT/provider-tests/x301/provider_x301_key_separation.c" \
         -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
         -o "$build/bin/provider_x301_key_separation"
+    for harness in provider_x301_contract provider_x301_hybrid_contract; do
+        /usr/bin/gcc -std=c11 -Wall -Wextra -Werror -pthread \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -fno-omit-frame-pointer -g \
+            -I"$prefix/include" \
+            "$ROOT/provider-tests/x301/$harness.c" \
+            -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
+            -o "$build/bin/${harness}_sanitizer"
+    done
 
     env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        X301_PROVIDER_FAILPOINT_MODE=inert \
         OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
         "$build/bin/provider_x301_contract" "$modules" \
         2>&1 | tee "$build/provider_x301_contract.log"
     env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        X301_PROVIDER_FAILPOINT_MODE=active \
+        OPENSSL_MODULES="$failpoint_modules" LD_LIBRARY_PATH="$prefix/lib" \
+        "$build/bin/provider_x301_contract" "$failpoint_modules" \
+        2>&1 | tee "$build/provider_x301_failpoint.log"
+    env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        X301_HYBRID_ALLOC_SWEEP=1 \
         OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
         "$build/bin/provider_x301_hybrid_contract" "$modules" \
         2>&1 | tee "$build/provider_x301_hybrid_contract.log"
@@ -146,6 +243,57 @@ run_lane() {
         OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
         "$build/bin/provider_x301_key_separation" "$modules" \
         2>&1 | tee "$build/provider_x301_key_separation.log"
+
+    # M5/T13 lifecycle memory lane.  In particular, the raw KEYEXCH harness
+    # executes four concurrent workers sharing the same immutable EVP_PKEYs;
+    # both direct and hybrid contexts must then tear down without an invalid
+    # access or a surviving definite/indirect/possible allocation.
+    for harness in provider_x301_contract provider_x301_hybrid_contract; do
+        env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+            OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
+            /usr/bin/valgrind --tool=memcheck --vgdb=no \
+                --error-exitcode=99 --track-origins=yes \
+                --undef-value-errors=yes --leak-check=full \
+                --errors-for-leak-kinds=definite,indirect,possible --quiet \
+                "$build/bin/$harness" "$modules" \
+                >"$build/$harness-valgrind.log" 2>&1
+    done
+
+    # F1-F3: all three provider-entry targets use the frozen W corpus first,
+    # followed by the complete, explicitly bounded structured sweep.
+    env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        X301_STRUCTURED_SWEEP=1 \
+        OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
+        "$build/bin/provider_x301_contract" "$modules" \
+        2>&1 | tee "$build/f1-f3-raw-derive-sweep.log"
+    env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        X301_STRUCTURED_SWEEP=1 \
+        OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
+        "$build/bin/provider_x301_hybrid_contract" "$modules" \
+        2>&1 | tee "$build/f1-f3-hybrid-parser-sweep.log"
+
+    # F4: repeat every target with ASan+UBSan on both the harness and the C
+    # provider boundary.  LeakSanitizer is disabled because OpenSSL owns
+    # process/thread globals; leak coverage is supplied by Valgrind instead.
+    for harness in provider_x301_contract provider_x301_hybrid_contract; do
+        env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+            X301_STRUCTURED_SWEEP=1 \
+            OPENSSL_MODULES="$sanitizer_modules" \
+            LD_LIBRARY_PATH="$prefix/lib" \
+            ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer \
+            "$build/bin/${harness}_sanitizer" "$sanitizer_modules" \
+            2>&1 | tee "$build/f4-${harness}-asan-ubsan.log"
+    done
+
+    # O1/O2: execute the X301 raw-key, pairwise, misuse and exact-derive
+    # contracts through the normative lane's unmodified evp_test runner.
+    env -i PATH=/usr/bin:/bin LC_ALL=C \
+        OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
+        "$source/test/evp_test" -config "$x301_evp_config" \
+        "$x301_evp_data" \
+        2>&1 | tee "$build/o1-o2-x301-evp-test.log"
 
     # T10: run the normative lane's own ACVP-v42/FIPS-203 EVP data through
     # its commit-exact evp_test executable.  The file contains ML-KEM-1024
@@ -160,12 +308,19 @@ run_lane() {
         2>&1 | tee "$build/t10-openssl-evp-test.log"
 
     sha256sum "$modules/x301.so" \
+        "$failpoint_modules/x301.so" \
+        "$sanitizer_modules/x301.so" \
         "$modules/ed301_eddsa_draft00.so" \
         "$build/bin/provider_x301_contract" \
         "$build/bin/provider_x301_hybrid_contract" \
+        "$build/bin/provider_x301_contract_sanitizer" \
+        "$build/bin/provider_x301_hybrid_contract_sanitizer" \
         "$build/bin/provider_x301_key_separation" \
-        "$data" >"$build/SHA256SUMS"
-    printf 'PASS lane=%s lane_evidence_sha256=%s h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS\n' \
+        "$build/provider_x301_contract-valgrind.log" \
+        "$build/provider_x301_hybrid_contract-valgrind.log" \
+        "$data" "$x301_evp_data" "$x301_evp_config" \
+        >"$build/SHA256SUMS"
+    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS\n' \
         "$lane" "$lane_evidence" \
         | tee "$build/STATUS.txt"
 }
@@ -175,5 +330,6 @@ run_lane 3.5.7 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
 run_lane 4.0.1 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
 sha256sum "$RESULT_ROOT/X301_SOURCE_SHA256SUMS" \
     "$RESULT_ROOT/TOOLCHAIN.txt" "$RESULT_ROOT/RUN_INPUTS.tsv" \
+    "$RESULT_ROOT/FUZZING_STRATEGY.txt" \
     >"$RESULT_ROOT/RUN_IDENTITY_SHA256SUMS"
 printf 'PASS X301 provider contracts both_lanes=2 result=%s\n' "$RESULT_ROOT"

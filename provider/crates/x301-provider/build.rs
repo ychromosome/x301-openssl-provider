@@ -98,6 +98,7 @@ fn main() {
     let hybrid_object = output_dir.join("hybrid_kem.o");
     let archive = output_dir.join("libx301_provider_shim.a");
     let hybrid = env::var_os("CARGO_FEATURE_TLS_X301_MLKEM1024").is_some();
+    let sanitizer = env::var_os("CARGO_FEATURE_TEST_SANITIZER").is_some();
     let mut compiler = Command::new("/usr/bin/gcc");
     compiler
         .arg("-std=c11")
@@ -113,6 +114,12 @@ fn main() {
         .arg("c/provider_shim.c")
         .arg("-o")
         .arg(&object);
+    if sanitizer {
+        compiler
+            .arg("-fsanitize=address,undefined")
+            .arg("-fno-sanitize-recover=all")
+            .arg("-fno-omit-frame-pointer");
+    }
     if env::var_os("CARGO_FEATURE_TEST_FAILPOINT").is_some() {
         compiler.arg("-DX301_TEST_FAILPOINT_ARTIFACT=1");
     }
@@ -143,6 +150,12 @@ fn main() {
             .arg("c/hybrid_kem.c")
             .arg("-o")
             .arg(&hybrid_object);
+        if sanitizer {
+            hybrid_compiler
+                .arg("-fsanitize=address,undefined")
+                .arg("-fno-sanitize-recover=all")
+                .arg("-fno-omit-frame-pointer");
+        }
         assert!(
             hybrid_compiler
                 .status()
@@ -171,6 +184,16 @@ fn main() {
             .expect("canonical OUT_DIR must remain UTF-8")
     );
     println!("cargo:rustc-link-lib=static=x301_provider_shim");
+    if sanitizer {
+        /*
+         * Test-only native instrumentation.  Stable Rust does not expose a
+         * supported whole-crate sanitizer switch, so Valgrind remains the
+         * independent Rust/FFI memory-safety lane.  These libraries bind the
+         * instrumented C provider boundary and hybrid parser into the DSO.
+         */
+        println!("cargo:rustc-link-lib=asan");
+        println!("cargo:rustc-link-lib=ubsan");
+    }
 
     println!(
         "cargo:rustc-link-search=native={}",

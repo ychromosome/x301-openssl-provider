@@ -1,0 +1,33 @@
+# Test-only host configuration for the unmodified OpenSSL evp_test runner.
+#
+# The raw-key parser in OpenSSL 3.5.7 and 4.0.1 first requires an OBJ/NID for
+# an algorithm name even though it subsequently calls the name-based `_ex`
+# EVP API.  Registering the project-assigned experimental OIDs in this host
+# context keeps the evppkey_ecx grammar unchanged and does not add an OID
+# dependency to the X301 provider itself.
+
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = providers
+oid_section = project_oids
+
+[providers]
+default = default_provider
+x301 = x301_provider
+ed301 = ed301_provider
+
+[default_provider]
+activate = 1
+
+[x301_provider]
+module = x301.so
+activate = 1
+
+[ed301_provider]
+module = ed301_eddsa_draft00.so
+activate = 1
+
+[project_oids]
+X301 = 1.3.6.1.4.1.66282.301.2
+Ed301-EdDSA-draft-00 = 1.3.6.1.4.1.66282.301.3

@@ -13,6 +13,7 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 
@@ -40,6 +41,39 @@
 #define CANARY_BYTES 16U
 
 static unsigned int checks;
+static unsigned long allocation_countdown;
+static unsigned long allocation_total;
+
+static void *counting_malloc(size_t size, const char *file, int line)
+{
+    (void)file;
+    (void)line;
+    allocation_total++;
+    if (allocation_countdown > 0 && --allocation_countdown == 0)
+        return NULL;
+    return malloc(size);
+}
+
+static void *counting_realloc(
+    void *pointer,
+    size_t size,
+    const char *file,
+    int line)
+{
+    (void)file;
+    (void)line;
+    allocation_total++;
+    if (allocation_countdown > 0 && --allocation_countdown == 0)
+        return NULL;
+    return realloc(pointer, size);
+}
+
+static void counting_free(void *pointer, const char *file, int line)
+{
+    (void)file;
+    (void)line;
+    free(pointer);
+}
 
 static int buffer_is(const unsigned char *buffer, size_t length, unsigned char value)
 {
@@ -293,6 +327,54 @@ static int decapsulate(
     return result;
 }
 
+static int full_hybrid_cycle(const char *module_directory)
+{
+    OSSL_LIB_CTX *libctx = NULL;
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *x301 = NULL;
+    EVP_PKEY *private_key = NULL;
+    EVP_PKEY *public_key = NULL;
+    unsigned char public_bytes[HYBRID_PUBLIC_BYTES];
+    unsigned char ciphertext[HYBRID_CIPHERTEXT_BYTES];
+    unsigned char encapsulated[HYBRID_SECRET_BYTES];
+    unsigned char decapsulated[HYBRID_SECRET_BYTES];
+    int result = 0;
+
+    libctx = OSSL_LIB_CTX_new();
+    if (libctx == NULL
+            || OSSL_PROVIDER_set_default_search_path(
+                libctx, module_directory) <= 0
+            || (deflt = OSSL_PROVIDER_load(
+                    libctx, DEFAULT_PROVIDER)) == NULL
+            || (x301 = OSSL_PROVIDER_load(
+                    libctx, X301_PROVIDER)) == NULL
+            || (private_key = generate_hybrid(libctx)) == NULL
+            || !export_hybrid_public(private_key, public_bytes)
+            || (public_key = import_hybrid_public(
+                    libctx, public_bytes, sizeof(public_bytes))) == NULL
+            || !encapsulate(
+                libctx, public_key, ciphertext, encapsulated)
+            || !decapsulate(
+                libctx, private_key, ciphertext,
+                sizeof(ciphertext), decapsulated)
+            || CRYPTO_memcmp(
+                encapsulated, decapsulated,
+                sizeof(encapsulated)) != 0)
+        goto done;
+    result = 1;
+
+done:
+    OPENSSL_cleanse(decapsulated, sizeof(decapsulated));
+    OPENSSL_cleanse(encapsulated, sizeof(encapsulated));
+    EVP_PKEY_free(public_key);
+    EVP_PKEY_free(private_key);
+    OSSL_PROVIDER_unload(x301);
+    OSSL_PROVIDER_unload(deflt);
+    OSSL_LIB_CTX_free(libctx);
+    ERR_clear_error();
+    return result;
+}
+
 static int encapsulation_short_buffers_are_atomic(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY *public_key)
@@ -392,6 +474,209 @@ static int hybrid_ciphertext_boundary_mutations_are_atomic(
         && decapsulation_failure_is_atomic(
                libctx, private_key, inserted, sizeof(inserted),
                HYBRID_SECRET_BYTES);
+}
+
+/*
+ * F1-F3 deterministic structured sweep at the hybrid EVP boundary.  This is
+ * the documented fallback when libFuzzer/AFL++ is unavailable.  It covers
+ * every length 0..1607, every bit of one valid client/server share, and every
+ * deletion/insertion position.  Acceptance of mutated ML-KEM public keys is
+ * deliberately left to FIPS 203/OpenSSL; state and output atomicity are not.
+ */
+static int swept_hybrid_public_is_atomic(
+    OSSL_LIB_CTX *libctx,
+    const unsigned char *candidate,
+    size_t candidate_length,
+    const unsigned char valid[HYBRID_PUBLIC_BYTES])
+{
+    EVP_PKEY *key = empty_hybrid(libctx);
+    unsigned char *unexpected = NULL;
+    unsigned char recovered[HYBRID_PUBLIC_BYTES];
+    int accepted;
+    int result = 0;
+
+    if (key == NULL)
+        goto done;
+    ERR_clear_error();
+    accepted = EVP_PKEY_set1_encoded_public_key(
+        key, candidate, candidate_length);
+    if (accepted > 0) {
+        if (candidate_length != HYBRID_PUBLIC_BYTES
+                || !export_hybrid_public(key, recovered)
+                || CRYPTO_memcmp(
+                    recovered, candidate, HYBRID_PUBLIC_BYTES) != 0)
+            goto done;
+    } else {
+        ERR_clear_error();
+        if (EVP_PKEY_get1_encoded_public_key(key, &unexpected) != 0
+                || unexpected != NULL
+                || EVP_PKEY_set1_encoded_public_key(
+                    key, valid, HYBRID_PUBLIC_BYTES) <= 0
+                || !export_hybrid_public(key, recovered)
+                || CRYPTO_memcmp(
+                    recovered, valid, HYBRID_PUBLIC_BYTES) != 0)
+            goto done;
+    }
+    result = 1;
+
+done:
+    ERR_clear_error();
+    OPENSSL_free(unexpected);
+    EVP_PKEY_free(key);
+    return result;
+}
+
+static int swept_hybrid_ciphertext_is_atomic(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *private_key,
+    const unsigned char *candidate,
+    size_t candidate_length,
+    const unsigned char original_secret[HYBRID_SECRET_BYTES],
+    int require_implicit_rejection_success)
+{
+    EVP_PKEY_CTX *context = EVP_PKEY_CTX_new_from_pkey(
+        libctx, private_key, X301_PROPERTIES);
+    unsigned char output[HYBRID_SECRET_BYTES + CANARY_BYTES];
+    size_t queried = 0;
+    size_t output_length = HYBRID_SECRET_BYTES;
+    int query_result;
+    int decap_result;
+    int result = 0;
+
+    if (context == NULL || EVP_PKEY_decapsulate_init(context, NULL) <= 0)
+        goto done;
+    memset(output, 0xa5, sizeof(output));
+    ERR_clear_error();
+    query_result = EVP_PKEY_decapsulate(
+        context, NULL, &queried, candidate, candidate_length);
+    if (query_result <= 0) {
+        result = !require_implicit_rejection_success
+            && buffer_is(output, sizeof(output), 0xa5);
+        goto done;
+    }
+    if (queried != HYBRID_SECRET_BYTES)
+        goto done;
+    decap_result = EVP_PKEY_decapsulate(
+        context, output, &output_length, candidate, candidate_length);
+    if (decap_result > 0) {
+        result = output_length == HYBRID_SECRET_BYTES
+            && !buffer_is(
+                output + MLKEM_SECRET_BYTES, X301_BYTES, 0)
+            && buffer_is(
+                output + HYBRID_SECRET_BYTES, CANARY_BYTES, 0xa5);
+        if (result && require_implicit_rejection_success) {
+            result = CRYPTO_memcmp(
+                output + MLKEM_SECRET_BYTES,
+                original_secret + MLKEM_SECRET_BYTES,
+                X301_BYTES) == 0;
+        }
+    } else {
+        result = !require_implicit_rejection_success
+            && buffer_is(output, sizeof(output), 0xa5);
+    }
+
+done:
+    ERR_clear_error();
+    OPENSSL_cleanse(output, sizeof(output));
+    EVP_PKEY_CTX_free(context);
+    return result;
+}
+
+static int structured_hybrid_parser_sweep(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *private_key,
+    const unsigned char valid_public[HYBRID_PUBLIC_BYTES],
+    const unsigned char valid_ciphertext[HYBRID_CIPHERTEXT_BYTES],
+    const unsigned char original_secret[HYBRID_SECRET_BYTES],
+    unsigned long *case_count)
+{
+    unsigned char public_candidate[HYBRID_PUBLIC_BYTES + 1U];
+    unsigned char ciphertext_candidate[HYBRID_CIPHERTEXT_BYTES + 1U];
+    unsigned char deleted[HYBRID_PUBLIC_BYTES - 1U];
+    size_t index;
+    unsigned int bit;
+    size_t length;
+    unsigned long cases = 0;
+
+    memcpy(public_candidate, valid_public, HYBRID_PUBLIC_BYTES);
+    public_candidate[HYBRID_PUBLIC_BYTES] = 0xa5;
+    memcpy(ciphertext_candidate, valid_ciphertext,
+        HYBRID_CIPHERTEXT_BYTES);
+    ciphertext_candidate[HYBRID_CIPHERTEXT_BYTES] = 0xa5;
+
+    for (length = 0; length <= HYBRID_PUBLIC_BYTES + 1U; length++) {
+        if (!swept_hybrid_public_is_atomic(
+                libctx, public_candidate, length, valid_public))
+            return 0;
+        if (!swept_hybrid_ciphertext_is_atomic(
+                libctx, private_key, ciphertext_candidate, length,
+                original_secret, 0))
+            return 0;
+        cases += 2U;
+    }
+
+    for (index = 0; index < HYBRID_PUBLIC_BYTES; index++) {
+        for (bit = 0; bit < 8U; bit++) {
+            memcpy(public_candidate, valid_public, HYBRID_PUBLIC_BYTES);
+            public_candidate[index] ^= (unsigned char)(1U << bit);
+            if (!swept_hybrid_public_is_atomic(
+                    libctx, public_candidate, HYBRID_PUBLIC_BYTES,
+                    valid_public))
+                return 0;
+
+            memcpy(ciphertext_candidate, valid_ciphertext,
+                HYBRID_CIPHERTEXT_BYTES);
+            ciphertext_candidate[index] ^= (unsigned char)(1U << bit);
+            if (!swept_hybrid_ciphertext_is_atomic(
+                    libctx, private_key, ciphertext_candidate,
+                    HYBRID_CIPHERTEXT_BYTES, original_secret,
+                    index < MLKEM_CIPHERTEXT_BYTES))
+                return 0;
+            cases += 2U;
+        }
+    }
+
+    for (index = 0; index < HYBRID_PUBLIC_BYTES; index++) {
+        memcpy(deleted, valid_public, index);
+        memcpy(deleted + index, valid_public + index + 1U,
+            HYBRID_PUBLIC_BYTES - index - 1U);
+        if (!swept_hybrid_public_is_atomic(
+                libctx, deleted, sizeof(deleted), valid_public))
+            return 0;
+
+        memcpy(deleted, valid_ciphertext, index);
+        memcpy(deleted + index, valid_ciphertext + index + 1U,
+            HYBRID_CIPHERTEXT_BYTES - index - 1U);
+        if (!swept_hybrid_ciphertext_is_atomic(
+                libctx, private_key, deleted, sizeof(deleted),
+                original_secret, 0))
+            return 0;
+        cases += 2U;
+    }
+
+    for (index = 0; index <= HYBRID_PUBLIC_BYTES; index++) {
+        memcpy(public_candidate, valid_public, index);
+        public_candidate[index] = 0xa5;
+        memcpy(public_candidate + index + 1U, valid_public + index,
+            HYBRID_PUBLIC_BYTES - index);
+        if (!swept_hybrid_public_is_atomic(
+                libctx, public_candidate, sizeof(public_candidate),
+                valid_public))
+            return 0;
+
+        memcpy(ciphertext_candidate, valid_ciphertext, index);
+        ciphertext_candidate[index] = 0xa5;
+        memcpy(ciphertext_candidate + index + 1U,
+            valid_ciphertext + index,
+            HYBRID_CIPHERTEXT_BYTES - index);
+        if (!swept_hybrid_ciphertext_is_atomic(
+                libctx, private_key, ciphertext_candidate,
+                sizeof(ciphertext_candidate), original_secret, 0))
+            return 0;
+        cases += 2U;
+    }
+    *case_count = cases;
+    return 1;
 }
 
 static int oversized_success_preserves_tail(
@@ -653,10 +938,21 @@ int main(int argc, char **argv)
     unsigned char mutated_ciphertext[HYBRID_CIPHERTEXT_BYTES];
     unsigned char mutated_secret_a[HYBRID_SECRET_BYTES];
     unsigned char mutated_secret_b[HYBRID_SECRET_BYTES];
+    const int allocation_sweep =
+        getenv("X301_HYBRID_ALLOC_SWEEP") != NULL;
+    const int structured_sweep =
+        getenv("X301_STRUCTURED_SWEEP") != NULL;
+    unsigned long sweep_cases = 0;
     int success = 0;
 
     if (argc != 2) {
         fprintf(stderr, "usage: %s PROVIDER_MODULE_DIRECTORY\n", argv[0]);
+        return 2;
+    }
+    if (allocation_sweep
+            && CRYPTO_set_mem_functions(
+                counting_malloc, counting_realloc, counting_free) != 1) {
+        fprintf(stderr, "cannot install X301 counting allocator\n");
         return 2;
     }
     libctx = OSSL_LIB_CTX_new();
@@ -806,6 +1102,23 @@ int main(int argc, char **argv)
     }
     pass("T9 ML-KEM mutation uses deterministic implicit rejection");
 
+    if (structured_sweep) {
+        if (!structured_hybrid_parser_sweep(
+                libctx, private_key, public_bytes, ciphertext,
+                original_secret, &sweep_cases)) {
+            fail("F1-F3 hybrid client/server parser structured sweep");
+            goto done;
+        }
+        {
+            char label[192];
+
+            snprintf(label, sizeof(label),
+                "F1-F3 hybrid client/server parser structured sweep "
+                "(%lu cases)", sweep_cases);
+            pass(label);
+        }
+    }
+
     if (!hybrid_cross_thread_child_libctx_lifecycle(argv[1])) {
         fail("hybrid child-LIBCTX survives main-thread teardown before worker exit");
         goto done;
@@ -819,7 +1132,6 @@ int main(int argc, char **argv)
     pass("hybrid keygen/import fail atomically without default provider");
 
     success = 1;
-    printf("provider_x301_hybrid_contract_pass=1 checks=%u\n", checks);
 
 done:
     OPENSSL_cleanse(mutated_secret_b, sizeof(mutated_secret_b));
@@ -839,5 +1151,34 @@ done:
     OSSL_PROVIDER_unload(x301);
     OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
+    if (success && allocation_sweep) {
+        unsigned long fail_at;
+        unsigned long clean_failures = 0;
+        unsigned long survivals = 0;
+
+        for (fail_at = 1; fail_at <= 800; fail_at += 11) {
+            allocation_countdown = fail_at;
+            if (full_hybrid_cycle(argv[1]))
+                survivals++;
+            else
+                clean_failures++;
+            allocation_countdown = 0;
+        }
+        if (clean_failures == 0 || !full_hybrid_cycle(argv[1])) {
+            fail("M6 hybrid allocation failures are clean and recoverable");
+            success = 0;
+        } else {
+            char label[192];
+
+            snprintf(label, sizeof(label),
+                "M6 hybrid allocation sweep recovers "
+                "(clean failures=%lu survivals=%lu)",
+                clean_failures, survivals);
+            pass(label);
+        }
+        printf("openssl_allocations_observed=%lu\n", allocation_total);
+    }
+    if (success)
+        printf("provider_x301_hybrid_contract_pass=1 checks=%u\n", checks);
     return success ? 0 : 1;
 }

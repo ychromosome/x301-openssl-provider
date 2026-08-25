@@ -20,6 +20,7 @@ path = "src/lib.rs"
 [features]
 default = []
 test-failpoint = []
+test-sanitizer = []
 tls-x301-mlkem1024 = []
 
 [dependencies]
