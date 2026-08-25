@@ -1,7 +1,19 @@
-# Ed301-EdDSA
+# Ed301, X301 and X301MLKEM1024
 
-Experimental Rust implementation of `Ed301-EdDSA-draft-00` over the ED301
-elliptic curve.
+This repository contains three related experimental components over ED301:
+
+- `Ed301-EdDSA-draft-00`, implemented as a `no_std` Rust core and an optional
+  OpenSSL signature provider;
+- `X301`, exposed through a distinct OpenSSL `KEYMGMT`/`KEYEXCH`; and
+- `X301MLKEM1024`, an opt-in private-use TLS 1.3 group that delegates
+  ML-KEM-1024 to OpenSSL's default provider.
+
+The components share field arithmetic but use separate key domains.  Start
+with `inputs/round4/ED301-EdDSA-draft.md` for the signature byte contract,
+`docs/X301_DRAFT.md` for X301 and the hybrid construction, and
+`PROVIDER_STATUS.md` for the assurance boundary.
+
+The cryptographic Rust core is:
 
 - `no_std`
 - safe Rust
@@ -30,10 +42,10 @@ exact commit; authoritative build gates do not accept it.
 
 ## Experimental OpenSSL provider
 
-The `provider-experiment` branch contains a signature-only provider. OpenSSL
-must first be built into a sealed lane from a pinned public release tarball.
-The externally recorded digest of that lane's evidence manifest is then an
-input to the provider gate:
+The ordinary Ed301-EdDSA provider module is signature-only. OpenSSL must first
+be built into a sealed lane from a pinned public release tarball. The
+externally recorded digest of that lane's evidence manifest is then an input
+to the provider gate:
 
 ```sh
 scripts/build-openssl-provider-lane.sh 3.5.7 /trusted/upstream /private/lane-root
@@ -87,8 +99,14 @@ cryptography.
 
 ## Status
 
-Round-2 post-finding-repair candidate awaiting a fresh full-scope deep scan.
-Not production-ready.
+- **Ed301-EdDSA:** frozen draft-00 byte contract; integration candidate;
+  another full-scope deep scan remains pending.
+- **X301:** pre-freeze integration candidate; independent security and
+  performance review remain pending.
+- **X301MLKEM1024:** private-use assurance candidate; independent security and
+  performance review remain pending; no IANA allocation is claimed.
+
+None of these components is production-ready.
 
 See `STATUS.md` and `ZEROIZATION_AND_CT_BOUNDARY.md` for the current assurance
 boundary.
