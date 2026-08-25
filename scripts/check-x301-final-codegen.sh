@@ -47,10 +47,13 @@ test ! -e "$EVIDENCE" || {
 
 DUMP=$EVIDENCE/provider.objdump
 X301=$EVIDENCE/x301.asm
+LADDER=$EVIDENCE/x301-ladder.asm
 LOOP=$EVIDENCE/x301-ladder-loop.asm
 PUBLIC=$EVIDENCE/x301-public-from-secret.asm
 BASE_SELECT=$EVIDENCE/x301-basepoint-select.asm
 AFFINE_SELECT=$EVIDENCE/x301-affine-select.asm
+COMB=$EVIDENCE/x301-prepared-comb.asm
+COMB_DIGITS=$EVIDENCE/x301-prepared-comb-digits.asm
 SUMMARY=$EVIDENCE/summary.txt
 /usr/bin/objdump -d -C --no-show-raw-insn --disassemble-zeroes --wide \
     "$MODULE" >"$DUMP"
@@ -95,6 +98,7 @@ forbidden_straight_line() {
 }
 
 extract_symbol 'ed301_eddsa::x301::x301' "$X301"
+extract_symbol 'ed301_eddsa::x301::ladder' "$LADDER"
 
 # Reject variable-time arithmetic and traps anywhere in the X301 function.
 # Public decode/failure branches and the fixed safegcd loops are recorded but
@@ -112,13 +116,14 @@ fi
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { print }
 ' "$X301" >"$EVIDENCE/x301-all-branches.txt"
 
-# The compiler inlines ladder/cswap into x301().  Locate the loop from the
-# public fixed counter value 300 through its first backward conditional edge.
+# Locate the named ladder loop from the public fixed counter value 300 through
+# its first backward conditional edge. Keeping the symbol named makes the
+# final-binary gate independent of the compiler's inlining budget.
 /usr/bin/gawk '
     /^[[:space:]]*[[:xdigit:]]+:/ {
         address = $1
         sub(/:$/, "", address)
-        if (index($0, "$0x12c,%edx") != 0)
+        if (index($0, "$0x12c,%") != 0)
             active = 1
         if (active)
             print
@@ -127,7 +132,7 @@ fi
                 strtonum("0x" $3) < strtonum("0x" address))
             exit
     }
-' "$X301" >"$LOOP"
+' "$LADDER" >"$LOOP"
 test -s "$LOOP"
 
 branches=$(/usr/bin/awk '
@@ -171,11 +176,13 @@ test "$cmov" -ge 40 || {
 # defined when the scalar contents are tainted.
 /usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
-            $2 !~ /^lea/ && $2 !~ /^nop/ { print }
+            $2 !~ /^lea/ && index($0, "nop") == 0 { print }
 ' "$LOOP" >"$EVIDENCE/x301-indexed-memory.txt"
 test "$(/usr/bin/awk 'END { print NR + 0 }' \
         "$EVIDENCE/x301-indexed-memory.txt")" -eq 1
 /usr/bin/grep -Eq 'movzbl[[:space:]]+[^,]*\(%rsp,%rcx,1\),%ecx$' \
+    "$EVIDENCE/x301-indexed-memory.txt" || \
+/usr/bin/grep -Eq 'movzbl[[:space:]]+\(%r[a-z0-9]+,%rcx,1\),%ecx$' \
     "$EVIDENCE/x301-indexed-memory.txt"
 
 # The inlined ladder may call only the existing shared field backend.
@@ -274,6 +281,55 @@ printf 'PASS x301_keygen=fixed-base base_select_sites=%s affine_add_sites=%s dou
     "$base_select_calls" "$affine_add_calls" "$double_calls" "$invert_calls" \
     | tee -a "$SUMMARY"
 
+# Prepared derive uses regular signed five-bit comb recoding. The only
+# conditional edges are fixed public loop counters: 304 recoding steps, 16
+# full-scan table entries, 61 comb rows, and the normal/unwind zeroization
+# loops. Secret-taint independently verifies that the scalar cannot influence
+# branch decisions or addresses.
+extract_symbol \
+    '<ed301_eddsa::edwards::EdwardsPoint>::scalar_mul_x301_comb' "$COMB"
+extract_symbol 'ed301_eddsa::edwards::x301_regular_signed_digits' \
+    "$COMB_DIGITS"
+for section in "$COMB" "$COMB_DIGITS"; do
+    if /usr/bin/awk '
+        /^[[:space:]]*[[:xdigit:]]+:/ &&
+                ($2 ~ /^loop/ || $2 ~ /^div/ || $2 ~ /^idiv/ ||
+                 $2 == "ud2" || $2 == "int3" || $2 ~ /^jmp/) {
+            print
+            bad = 1
+        }
+        END { exit bad ? 0 : 1 }
+    ' "$section"; then
+        echo "forbidden prepared-comb instruction" >&2
+        exit 1
+    fi
+done
+test "$(/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { count++ }
+    END { print count + 0 }
+' "$COMB_DIGITS")" -eq 1
+/usr/bin/grep -Eq \
+    'cmp[[:space:]]+\$0x130,%rbp' "$COMB_DIGITS"
+test "$(/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { count++ }
+    END { print count + 0 }
+' "$COMB")" -eq 4
+test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x10,%rdi' "$COMB")" -eq 1
+test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x131,' "$COMB")" -eq 2
+test "$(/usr/bin/grep -c 'mov[[:space:]]\+\$0x3d,%eax' "$COMB")" -eq 1
+/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { print }
+' "$COMB" >"$EVIDENCE/x301-prepared-comb-branches.txt"
+/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
+            $2 !~ /^lea/ && index($0, "nop") == 0 { print }
+' "$COMB" >"$EVIDENCE/x301-prepared-comb-indexed-memory.txt"
+test "$(/usr/bin/awk 'END { print NR + 0 }' \
+        "$EVIDENCE/x301-prepared-comb-indexed-memory.txt")" -eq 7
+printf '%s\n' \
+    'PASS x301_prepared_comb=regular-signed width=5 rows=61 table_scan=16' \
+    'PASS x301_prepared_comb_secret_taint_gate=required' | tee -a "$SUMMARY"
+
 # Checker negative control: a synthetic conditional edge must be rejected.
 NEGATIVE=$EVIDENCE/negative-control.asm
 /usr/bin/awk '{ print } END { print "deadbeef: jne deadbeef" }' \
@@ -288,8 +344,8 @@ printf 'PASS x301_ladder_rounds=301 loop_branches=1 cmov=%s indexed_reads=1\n' \
 printf '%s\n' \
     'PASS field_backend=ed301_eddsa::field_5x64 branch_free=1' \
     'PASS negative_control=conditional-edge-rejected' | tee -a "$SUMMARY"
-/usr/bin/sha256sum "$MODULE" "$DUMP" "$X301" "$LOOP" "$PUBLIC" \
-    "$BASE_SELECT" "$AFFINE_SELECT" "$SUMMARY" \
+/usr/bin/sha256sum "$MODULE" "$DUMP" "$X301" "$LADDER" "$LOOP" "$PUBLIC" \
+    "$BASE_SELECT" "$AFFINE_SELECT" "$COMB" "$COMB_DIGITS" "$SUMMARY" \
     >"$EVIDENCE/SHA256SUMS"
 printf 'PASS x301_final_codegen module_sha256=%s evidence=%s\n' \
     "$(/usr/bin/sha256sum "$MODULE" | /usr/bin/awk '{ print $1 }')" \

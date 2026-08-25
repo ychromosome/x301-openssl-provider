@@ -4,8 +4,8 @@ use ed301_eddsa::{
     SigningKey,
     parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
     x301::{
-        PUBLIC_BYTES as X301_PUBLIC_BYTES, SHARED_BYTES as X301_SHARED_BYTES, public_from_secret,
-        x301,
+        PUBLIC_BYTES as X301_PUBLIC_BYTES, SHARED_BYTES as X301_SHARED_BYTES, prepare_peer,
+        public_from_secret, shared_secret_prepared, x301,
     },
 };
 use ed301_valgrind_client::{get_vbits, make_defined, mark_undefined, running_on_valgrind};
@@ -58,6 +58,7 @@ fn run() -> Result<(), String> {
         "sign" => run_sign(mode)?,
         "x301-keygen" => run_x301_keygen(mode)?,
         "x301-derive" => run_x301_derive(mode)?,
+        "x301-derive-prepared" => run_x301_derive_prepared(mode)?,
         _ => return Err(format!("unsupported case: {case}")),
     }
     println!(
@@ -128,6 +129,24 @@ fn run_x301_derive(mode: Mode) -> Result<(), String> {
     make_defined(&mut observed);
     if observed != expected {
         return Err("X301 shared-secret KAT mismatch".into());
+    }
+    Ok(())
+}
+
+fn run_x301_derive_prepared(mode: Mode) -> Result<(), String> {
+    let mut scalar = required_array::<SEED_BYTES>(SECRET_ENV)?;
+    let public = required_array::<X301_PUBLIC_BYTES>(X301_PUBLIC_ENV)?;
+    let expected = required_array::<X301_SHARED_BYTES>(X301_SHARED_ENV)?;
+    let prepared = prepare_peer(&public).map_err(|_| "X301 peer preparation failed")?;
+    apply_mode(mode, &mut scalar);
+    let shared =
+        shared_secret_prepared(&scalar, &prepared).map_err(|_| "prepared X301 derive failed")?;
+    require_secret_vbits(mode, shared.as_bytes())?;
+    make_defined(&mut scalar);
+    let mut observed = *shared.as_bytes();
+    make_defined(&mut observed);
+    if observed != expected {
+        return Err("prepared X301 shared-secret KAT mismatch".into());
     }
     Ok(())
 }

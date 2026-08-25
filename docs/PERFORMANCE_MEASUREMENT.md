@@ -6,6 +6,22 @@ measured before and after every round as a load/frequency control. The session
 also records exact binaries and manifests, affinity, CPU state, load, process
 snapshots and one deterministic Callgrind count per tested variant.
 
+For key exchange, three timings are intentionally distinct:
+
+- `derive`: repeated derivation after peer setup and two untimed warm-up
+  derivations; this is the prepared steady-state metric;
+- `derive-prepare`: fresh public-key import, context creation, derive init and
+  peer setup only;
+- `derive-total`: fresh public-key import, context creation, peer setup and one
+  derivation.
+
+Prepared throughput must never be reported as one-shot latency.
+
+The current provider deliberately keeps the first derive on the ladder. It
+builds a public-peer table only when the same context is used again. Thus
+`derive` measures amortized repeated use, while `derive-total` remains the TLS
+and one-shot latency guard.
+
 A number is a local reference unless all of these hold:
 
 - baseline and candidate are paired in the same ABBA session;

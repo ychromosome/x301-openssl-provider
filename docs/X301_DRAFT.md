@@ -14,6 +14,7 @@ an ML-KEM implementation, a combiner KDF, or a standalone hybrid protocol.
 | Subject | Standard or contract source | Local use |
 | --- | --- | --- |
 | Montgomery conversion, ladder and XDH API pattern | [RFC 7748 Sections 4-6](https://www.rfc-editor.org/rfc/rfc7748.html) | D1-D4, scalar/u processing, all-zero check |
+| Fixed-base comb and signed nonzero comb schedule | Lim and Lee, *More Flexible Exponentiation with Precomputation*, CRYPTO '94; [Hedabou, Pinel and Beneteau, ISPEC 2005](https://doi.org/10.1007/978-3-540-31979-5_8) | Public-peer precomputation and regular nonzero signed columns in `X-PREP`; constant-time selection remains a local proof obligation |
 | TLS 1.3 group negotiation and key schedule | [RFC 9846 Sections 4.3.7, 4.3.8, 7.1 and 7.4](https://www.rfc-editor.org/info/rfc9846/) | NamedGroup/private-use range, fresh KeyShare values, raw asymmetric secret and the TLS KDF |
 | Hybrid TLS construction | [RFC 9954](https://www.rfc-editor.org/rfc/rfc9954.html) | Concatenated component shares and secrets; failure as one group |
 | Registered X25519/ML-KEM instance | [RFC 10024 Sections 4-5](https://www.rfc-editor.org/rfc/rfc10024.html) | ML-KEM-first ordering and role-dependent share layout |
@@ -199,21 +200,36 @@ no such preprocessing, and it would be a project-owned rule. If the clamped
 scalar annihilates a supplied x-line, the ordinary D4 all-zero rule rejects
 the result.
 
-### 5.3 Ladder and output
+### 5.3 Scalar multiplication and output
 
-The product implementation MUST use the RFC 7748 Section 5 Montgomery ladder
-for exactly bits 300 down through 0 with `A24=(A-2)/4`. It MUST reuse the
-existing Ed301 5x64 `mul`, `square`, reduction and constant-time selection
-domain. A ladder swap may only apply that same selection to the two existing
-states; it MUST NOT add a second field representation, reducer, independent
-selector or variable-time product path.
+The canonical and fallback implementation is the RFC 7748 Section 5
+Montgomery ladder for exactly bits 300 down through 0 with
+`A24=(A-2)/4`. It reuses the existing Ed301 5x64 `mul`, `square`, reduction
+and constant-time selection domain. Twist and exceptional Montgomery inputs
+always use this path.
 
-The ladder returns the affine value `x_2/z_2`. Inversion, encoding and every
-error path MUST use the existing secret-ownership and zeroization rules.
+For repeated derivation with the same public main-curve peer, the provider may
+use the registered `X-PREP` fixed-base comb. Preparation maps the public peer
+to Edwards form, multiplies it by the cofactor, and creates a public table. The
+secret schedule uses 305 regular signed digits in 61 fixed rounds; every round
+scans all 16 entries. Internally, `X` and `T` are scaled by `45677` to the
+isomorphic `a=1`, `d'=d/a` model. `Y` and `Z`, hence the output
+`u=(Z+Y)/(Z-Y)`, are unchanged. This is not a second field representation:
+all values use the same `Fe301` type, reduction, inversion and conditional
+selection.
+
+The provider's first derive after peer setup remains on the ladder. A second
+call may build the public table; subsequent calls use the comb. Peer
+replacement and derive reinitialization discard the table. Main-curve/twist
+classification depends only on the public encoding. Both paths must return
+identical bytes and apply the same all-zero rule.
+
+Inversion, encoding and every error path use the existing secret-ownership and
+zeroization rules. No variable-time secret schedule is permitted.
 
 ### 5.4 D4: contributory behaviour
 
-After a successful ladder, the implementation MUST compare all 38 output
+After a successful scalar multiplication, the implementation MUST compare all 38 output
 octets with zero without secret-dependent control flow. An all-zero value MUST
 return an error and MUST NOT release a result. This mandatory rule translates
 the strict policy in RFC 9846 Section 7.4.2, which requires all-zero rejection
@@ -414,9 +430,9 @@ a standards-conformance claim:
 | T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | PASS on both exact lanes, including fresh component digests across resumption, fallback and no-common-group failure |
 | T9 | ML-KEM mutation, all-zero X301 and boundary mutations | PASS on both exact lanes; wire mutation fails protected-record authentication without an explicit KEM error |
 | T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | PASS: 35 ML-KEM-1024 cases/105 checks on 3.5.7 and 36 cases/108 checks on 4.0.1 |
-| T11 | cover public derivation, signing, X301 key generation and X301 derive, each in defined and tainted mode | PASS: all eight cases on the final read-only archive snapshot; its externally anchored source-manifest digest is recorded in the sealed result bundle |
-| T12 | ladder/cswap/field and fixed-base key-generation disassembly gate | PASS on both final provider modules: the generic derive retains 301 rounds, one fixed loop edge, 64 `cmov` and one public-index scalar read; key generation retains branchless fixed-base selection and exactly one projective-map inversion |
-| T13 | scalar, ladder-state and shared-secret zeroization | PASS for the named-owner boundary; direct/hybrid EVP lifecycle and reduced long-handshake lanes are Valgrind-clean on both OpenSSL versions |
+| T11 | cover public derivation, signing, X301 key generation, ladder derive and prepared derive, each in defined and tainted mode | Pending final sealed rerun: the development build passes all ten Valgrind cases |
+| T12 | ladder/cswap/field, fixed-base key-generation and prepared-comb disassembly gate | Pending final sealed rerun: the development module has one fixed 301-round ladder edge and a 61-row, 16-entry full-scan prepared comb with no secret-dependent branch or address observed |
+| T13 | scalar, ladder/comb state and shared-secret zeroization | Pending final sealed rerun for the prepared path; the earlier direct/hybrid EVP lifecycle and reduced long-handshake lanes are Valgrind-clean on both OpenSSL versions |
 
 ### 10.1 Extended adversarial assurance
 
@@ -444,7 +460,7 @@ declared length, deletion, insertion, bit and byte-value grids; it is not a
 coverage-guided fuzzing claim.
 
 The current core run has 44 default-feature tests. With `x301` enabled it
-registers 58 tests: 55 run in the ordinary debug/release matrix and the
+registers 59 tests: 56 run in the ordinary debug/release matrix and the
 1,000-property, 10,000-case differential and 1,000,000-iteration tests are
 three explicitly ignored long lanes executed separately. The independent
 oracle has 12 ordinary tests plus the separate slow L1 recomputation. Each OpenSSL
@@ -453,21 +469,22 @@ structured-sweep and native ML-KEM data matrices with their individual counts
 recorded in the sealed result bundle.
 `fmt`, `clippy -D warnings`, rustdoc, both feature states, GCC `-fanalyzer`,
 Clang static analysis, final codegen and the materialized twist evidence in
-Section 8 pass. The final T11 run additionally verifies the source tree both
-before and after all eight Valgrind cases, so every T1-T13 item is now bound to
-the committed product snapshot or to its explicitly named binary lane.
+Section 8 passed for the preceding snapshot. The new prepared path requires a
+fresh sealed T11-T13 rerun before those claims transfer to the next commit.
 
 ## 11. Simplicity and implementation limits
 
-The product X301 ladder, encoding and clamping target remains under 400 source
-lines excluding tests. The provider hybrid adapter target remains under 600
-source lines excluding tests. The reproducible metric is nonblank,
-non-comment source lines: X301 counts only the production portion before its
-test module; the hybrid count is `hybrid_kem.c` plus all lines conditional on
+The original X301 ladder, encoding and clamping target remains under 400
+source lines excluding tests. The requested repeated-derive accelerator is
+counted separately, and the combined figure is reported. The provider hybrid
+adapter target remains under 600 source lines excluding tests. The
+reproducible metric is nonblank, non-comment source lines: the wire core counts
+the production portion of `x301.rs` before its test module; accelerator
+additions are measured against commit `b3a9d1b`; the hybrid count is
+`hybrid_kem.c` plus all lines conditional on
 `X301_ENABLE_HYBRID_MLKEM1024` in `provider_shim.c`. Physical formatting and
-contract comments are reported separately and are never hidden. Exceeding the
-source-line target is a review finding requiring a written reason, not a
-license to add mechanisms.
+contract comments are never hidden. Exceeding the target is a review finding
+requiring a written reason, not a license to add mechanisms.
 
 Every new product source file and public function MUST name its controlling
 RFC, FIPS or OpenSSL contract in its source comment. The X301 implementation
@@ -480,13 +497,19 @@ The measured production counts are:
 
 | Surface | Physical lines | Nonblank, non-comment source lines | Budget |
 | --- | ---: | ---: | ---: |
-| X301 core before its test-only section | 278 | 168 | under 400 |
+| X301 wire core before its test-only section | 347 | 214 | under 400 |
+| Prepared repeated-derive accelerator in the shared Edwards module | 377 added | 299 added | separately reported |
+| Combined X301-specific product surface | 724 | 513 | exceeds the original 400-line target by 113 source lines |
 | `hybrid_kem.c` | 583 | 516 | |
 | hybrid-only blocks in `provider_shim.c` | 81 | 80 | |
 | Hybrid total | 664 | 596 | under 600 source lines |
 
-The physical total is reported rather than hidden: 68 lines are required
-source citations, contract comments, and spacing. The implementation budget
+The combined X301 count is reported rather than hidden. The overrun is the
+cost of the owner-requested prepared-Derive target: simpler ladder, paired,
+width-4/5/6 and unregularized-comb candidates did not reach 1.56 times X25519.
+It requires explicit review and is not absorbed into the hybrid budget. The
+hybrid physical total is also reported rather than hidden: 68 lines are
+required source citations, contract comments, and spacing. The implementation budget
 uses the stated reproducible nonblank/non-comment metric so documentation
 mandated by this profile does not penalize the simpler implementation. Both
-figures MUST be recomputed whenever either product file changes.
+surfaces MUST be recomputed whenever a counted product file changes.

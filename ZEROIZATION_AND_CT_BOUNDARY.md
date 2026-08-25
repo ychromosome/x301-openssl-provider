@@ -14,8 +14,10 @@ candidate therefore makes no forensic stack-remanence or every-copy
 zeroization claim.
 
 The optional X301 core follows the same boundary. Its raw scalar, persistent
-Montgomery-ladder state, projective output and returned 38-byte shared secret
-have non-`Copy` RAII owners that clear on normal return, error and unwinding.
+Montgomery-ladder state, prepared-comb signed digits/projective accumulator,
+projective output and returned 38-byte shared secret have non-`Copy` RAII
+owners that clear on normal return, error and unwinding. The prepared table is
+derived only from the public peer and is not a secret owner.
 The provider additionally clears its 38-byte raw derive buffer and the complete
 70-byte `ML-KEM-SS || X301-SS` temporary on every exit after creation. Per-round
 `Fe301` products and inversion temporaries remain by-value values covered by
@@ -60,10 +62,11 @@ preliminary control-flow and memory check for one local build, not a proof of
 constant-time execution, complete zeroization or fault resistance.
 
 With the `x301` feature, the same harness also marks the X301 private scalar
-undefined and exercises the complete 301-round derive path. The final-module
-gate separately inspects the ladder, conditional swaps and shared 5x64 field
-symbols. These observations are compiler- and binary-specific and do not
-strengthen the general limitation above.
+undefined and separately exercises the complete 301-round ladder and prepared
+comb derive paths. The final-module gate inspects the ladder, comb recoder,
+full-scan selector and shared 5x64 field symbols. These observations are
+compiler- and binary-specific and do not strengthen the general limitation
+above.
 
 Secret fixed-base multiplication uses signed radix 16 with a fixed number of
 digits. Every digit scans all eight entries in its table and selects with

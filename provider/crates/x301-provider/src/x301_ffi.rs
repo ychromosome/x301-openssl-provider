@@ -6,11 +6,15 @@
 
 use core::ffi::{c_int, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crypto_bigint::CtEq;
 use ed301_eddsa::x301::{
-    PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, public_from_secret, shared_secret,
-    validate_public_encoding,
+    PUBLIC_BYTES, PreparedX301Peer, SECRET_BYTES, SHARED_BYTES, prepare_peer, public_from_secret,
+    shared_secret, shared_secret_prepared, validate_public_encoding,
 };
 use zeroize::Zeroize;
 
@@ -97,10 +101,27 @@ struct X301Key {
     public: Option<[u8; PUBLIC_BYTES]>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct X301Exchange {
     private: Option<SecretBytes>,
     peer_public: Option<[u8; PUBLIC_BYTES]>,
+    prepared_peer: OnceLock<PreparedX301Peer>,
+    derived_once: AtomicBool,
+}
+
+impl Clone for X301Exchange {
+    fn clone(&self) -> Self {
+        let prepared_peer = OnceLock::new();
+        if let Some(prepared) = self.prepared_peer.get() {
+            let _ = prepared_peer.set(prepared.clone());
+        }
+        Self {
+            private: self.private.clone(),
+            peer_public: self.peer_public,
+            prepared_peer,
+            derived_once: AtomicBool::new(self.derived_once.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 #[cfg(feature = "test-failpoint")]
@@ -483,6 +504,8 @@ unsafe extern "C" fn exchange_init(exchange: *mut c_void, key: *const c_void) ->
         *exchange = X301Exchange {
             private: Some(private),
             peer_public: None,
+            prepared_peer: OnceLock::new(),
+            derived_once: AtomicBool::new(false),
         };
         1
     })
@@ -508,6 +531,8 @@ unsafe extern "C" fn exchange_set_peer(exchange: *mut c_void, peer: *const c_voi
             return 0;
         }
         exchange.peer_public = Some(public);
+        exchange.prepared_peer = OnceLock::new();
+        exchange.derived_once.store(false, Ordering::Relaxed);
         1
     })
 }
@@ -528,8 +553,30 @@ unsafe extern "C" fn exchange_derive(
         else {
             return 0;
         };
-        let Ok(shared) = shared_secret(&private.0, peer_public) else {
-            return 0;
+        let shared = if !exchange.derived_once.swap(true, Ordering::Relaxed) {
+            // Keep one-shot/TLS latency on the original RFC-7748 ladder. Only
+            // repeated use of the same public peer pays for and benefits from
+            // fixed-base precomputation.
+            match shared_secret(&private.0, peer_public) {
+                Ok(shared) => shared,
+                Err(_) => return 0,
+            }
+        } else {
+            if exchange.prepared_peer.get().is_none() {
+                let Ok(prepared) = prepare_peer(peer_public) else {
+                    return 0;
+                };
+                // Concurrent callers may compute the same public table; the
+                // first installed immutable value wins.
+                let _ = exchange.prepared_peer.set(prepared);
+            }
+            let Some(prepared) = exchange.prepared_peer.get() else {
+                return 0;
+            };
+            match shared_secret_prepared(&private.0, prepared) {
+                Ok(shared) => shared,
+                Err(_) => return 0,
+            }
         };
         // SAFETY: C supplies `output_len` writable bytes.
         i32::from(unsafe { write_exact(output, output_len, shared.as_bytes()) })

@@ -112,7 +112,7 @@ int main(int argc, char **argv)
 
     if (argc != 7 || !parse_size(argv[5], MAX_KEY_BYTES, &key_bytes)
             || !parse_size(argv[6], 100000000U, &count) || count == 0) {
-        fprintf(stderr, "usage: %s <keygen|derive|kem-keygen|encaps|decaps> "
+        fprintf(stderr, "usage: %s <keygen|derive|derive-prepare|derive-total|kem-keygen|encaps|decaps> "
             "<algorithm> <properties|-> <module-dir|-> <key-bytes> <count>\n",
             argv[0]);
         return EXIT_FAILURE;
@@ -123,11 +123,15 @@ int main(int argc, char **argv)
     module_directory = argv[4];
     if (!operation_is(operation, "keygen")
             && !operation_is(operation, "derive")
+            && !operation_is(operation, "derive-prepare")
+            && !operation_is(operation, "derive-total")
             && !operation_is(operation, "kem-keygen")
             && !operation_is(operation, "encaps")
             && !operation_is(operation, "decaps"))
         goto done;
-    if (operation_is(operation, "derive") && key_bytes == 0)
+    if ((operation_is(operation, "derive")
+            || operation_is(operation, "derive-prepare")
+            || operation_is(operation, "derive-total")) && key_bytes == 0)
         goto done;
 
     libctx = OSSL_LIB_CTX_new();
@@ -151,7 +155,9 @@ int main(int argc, char **argv)
             goto done;
         EVP_PKEY_free(key);
         key = NULL;
-    } else if (operation_is(operation, "derive")) {
+    } else if (operation_is(operation, "derive")
+            || operation_is(operation, "derive-prepare")
+            || operation_is(operation, "derive-total")) {
         for (index = 0; index < key_bytes; index++) {
             private_a[index] = (unsigned char)index;
             private_b[index] = (unsigned char)(key_bytes - 1U - index);
@@ -169,14 +175,29 @@ int main(int argc, char **argv)
             goto done;
         peer = raw_key(libctx, algorithm, properties, EVP_PKEY_PUBLIC_KEY,
             OSSL_PKEY_PARAM_PUB_KEY, public_b, public_length);
-        derive = EVP_PKEY_CTX_new_from_pkey(libctx, key, properties);
-        output_length = sizeof(output);
-        if (peer == NULL || derive == NULL
-                || EVP_PKEY_derive_init(derive) <= 0
-                || EVP_PKEY_derive_set_peer(derive, peer) <= 0
-                || EVP_PKEY_derive(derive, NULL, &output_length) <= 0
-                || output_length != key_bytes)
+        if (peer == NULL)
             goto done;
+        if (operation_is(operation, "derive")) {
+            derive = EVP_PKEY_CTX_new_from_pkey(libctx, key, properties);
+            output_length = sizeof(output);
+            if (derive == NULL || EVP_PKEY_derive_init(derive) <= 0
+                    || EVP_PKEY_derive_set_peer(derive, peer) <= 0
+                    || EVP_PKEY_derive(derive, NULL, &output_length) <= 0
+                    || output_length != key_bytes)
+                goto done;
+            /* Two untimed derives establish the explicitly prepared steady
+             * state for providers that amortize public-peer precomputation. */
+            for (index = 0; index < 2; index++) {
+                output_length = key_bytes;
+                if (EVP_PKEY_derive(derive, output, &output_length) <= 0
+                        || output_length != key_bytes)
+                    goto done;
+                sink ^= output[0];
+            }
+        } else {
+            EVP_PKEY_free(peer);
+            peer = NULL;
+        }
     } else {
         context = EVP_PKEY_CTX_new_from_name(libctx, algorithm, properties);
         if (context == NULL || EVP_PKEY_keygen_init(context) <= 0
@@ -223,6 +244,29 @@ int main(int argc, char **argv)
                     || output_length != key_bytes)
                 goto done;
             sink ^= output[0];
+        } else if (operation_is(operation, "derive-prepare")
+                || operation_is(operation, "derive-total")) {
+            peer = raw_key(libctx, algorithm, properties,
+                EVP_PKEY_PUBLIC_KEY, OSSL_PKEY_PARAM_PUB_KEY,
+                public_b, public_length);
+            derive = EVP_PKEY_CTX_new_from_pkey(libctx, key, properties);
+            if (peer == NULL || derive == NULL
+                    || EVP_PKEY_derive_init(derive) <= 0
+                    || EVP_PKEY_derive_set_peer(derive, peer) <= 0)
+                goto done;
+            if (operation_is(operation, "derive-total")) {
+                output_length = key_bytes;
+                if (EVP_PKEY_derive(derive, output, &output_length) <= 0
+                        || output_length != key_bytes)
+                    goto done;
+                sink ^= output[0];
+            } else {
+                sink ^= (unsigned char)(uintptr_t)derive;
+            }
+            EVP_PKEY_CTX_free(derive);
+            derive = NULL;
+            EVP_PKEY_free(peer);
+            peer = NULL;
         } else if (operation_is(operation, "kem-keygen")) {
             if (EVP_PKEY_generate(context, &generated) <= 0)
                 goto done;

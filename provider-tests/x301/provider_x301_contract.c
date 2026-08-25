@@ -506,12 +506,15 @@ static int duplicated_context_is_independent(
     EVP_PKEY_CTX *original = EVP_PKEY_CTX_new_from_pkey(
         libctx, private_key, X301_PROPERTIES);
     EVP_PKEY_CTX *duplicate = NULL;
+    unsigned char warmup[X301_BYTES];
     unsigned char original_output[X301_BYTES];
     unsigned char duplicate_output[X301_BYTES];
     int result = 0;
 
     if (original == NULL || EVP_PKEY_derive_init(original) <= 0
             || EVP_PKEY_derive_set_peer(original, peer) <= 0
+            || !derive_initialized(original, warmup)
+            || !derive_initialized(original, warmup)
             || (duplicate = EVP_PKEY_CTX_dup(original)) == NULL)
         goto done;
     if (!derive_initialized(duplicate, duplicate_output)
@@ -524,6 +527,7 @@ static int duplicated_context_is_independent(
     result = 1;
 
 done:
+    OPENSSL_cleanse(warmup, sizeof(warmup));
     OPENSSL_cleanse(original_output, sizeof(original_output));
     OPENSSL_cleanse(duplicate_output, sizeof(duplicate_output));
     EVP_PKEY_CTX_free(duplicate);
@@ -1431,10 +1435,10 @@ int main(int argc, char **argv)
     pass("M1/M2 second peer wins and repeated derive is stable");
 
     if (!duplicated_context_is_independent(libctx, private_a, public_b)) {
-        fail("M3 dupctx preserves independent ready-to-derive state");
+        fail("M3 dupctx preserves independent prepared derive state");
         goto done;
     }
-    pass("M3 dupctx preserves independent ready-to-derive state");
+    pass("M3 dupctx preserves independent prepared derive state");
 
     if (!reinitialization_clears_peer(
             libctx, private_a, private_b, public_a, public_b)) {

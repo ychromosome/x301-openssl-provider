@@ -17,8 +17,9 @@ use crate::{
     test_support::{decode_hex_array, splitmix64},
     x301::{
         BASE_U_BYTES, PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, X301_BYTES, X301Error,
-        clamped_scalar_for_test, montgomery_a_for_test, public_from_secret,
-        public_from_secret_ladder_for_test, shared_secret, validate_public_encoding, x301,
+        clamped_scalar_for_test, montgomery_a_for_test, prepare_peer, public_from_secret,
+        public_from_secret_ladder_for_test, shared_secret, shared_secret_prepared,
+        validate_public_encoding, x301,
     },
 };
 
@@ -78,6 +79,31 @@ fn sizes_and_fixed_rfc_style_kats_match_the_independent_oracle() {
 }
 
 #[test]
+fn prepared_main_curve_comb_matches_the_ladder_and_low_order_rejection() {
+    let prepared_b = prepare_peer(&PUBLIC_B).expect("B public key prepares");
+    let shared = shared_secret_prepared(&SECRET_A, &prepared_b).expect("prepared A/B derive");
+    assert_eq!(shared.as_bytes(), &SHARED_AB);
+
+    let mut state = 0x9f32_3001_c0de_5eed_u64;
+    for case in 0..512 {
+        let local = random_secret(&mut state);
+        let peer_secret = random_secret(&mut state);
+        let peer_public = public_from_secret(&peer_secret).expect("peer public key");
+        let prepared = prepare_peer(&peer_public).expect("main-curve peer prepares");
+        let ladder = shared_secret(&local, &peer_public).expect("ladder derive");
+        let comb = shared_secret_prepared(&local, &prepared).expect("comb derive");
+        assert_eq!(comb.as_bytes(), ladder.as_bytes(), "case {case}");
+    }
+
+    let zero = [0_u8; PUBLIC_BYTES];
+    let prepared_zero = prepare_peer(&zero).expect("order-two u prepares");
+    assert!(matches!(
+        shared_secret_prepared(&SECRET_A, &prepared_zero),
+        Err(X301Error::AllZeroSharedSecret)
+    ));
+}
+
+#[test]
 fn k1_clamped_scalar_reduction_matches_the_independent_boundary_vectors() {
     let document: serde_json::Value = serde_json::from_str(include_str!(
         "../../../reference/x301/x301-perf-k1-seed.json"
@@ -91,6 +117,7 @@ fn k1_clamped_scalar_reduction_matches_the_independent_boundary_vectors() {
     assert_eq!(vectors.len(), 9);
 
     let mut interval_counts = [0_usize; 4];
+    let prepared_b = prepare_peer(&PUBLIC_B).expect("boundary peer prepares");
     for vector in vectors {
         let label = vector["label"].as_str().expect("K1 label");
         let clamped = decode_runtime_hex(
@@ -116,6 +143,9 @@ fn k1_clamped_scalar_reduction_matches_the_independent_boundary_vectors() {
             expected,
             "{label}"
         );
+        let ladder = shared_secret(&clamped, &PUBLIC_B).expect("boundary ladder derive");
+        let comb = shared_secret_prepared(&clamped, &prepared_b).expect("boundary prepared derive");
+        assert_eq!(comb.as_bytes(), ladder.as_bytes(), "prepared {label}");
     }
     assert!(interval_counts[1] > 0);
     assert!(interval_counts[2] > 0);
@@ -181,12 +211,28 @@ fn wycheproof_style_adversarial_corpus_matches_the_x301_contract() {
                     expected_output.as_slice(),
                     "tcId {tc_id}"
                 );
+                let prepared = prepare_peer(&public)
+                    .unwrap_or_else(|error| panic!("tcId {tc_id} prepare: {error:?}"));
+                let prepared_output = shared_secret_prepared(&secret, &prepared)
+                    .unwrap_or_else(|error| panic!("tcId {tc_id} prepared: {error:?}"));
+                assert_eq!(
+                    &prepared_output.as_bytes()[..],
+                    expected_output.as_slice(),
+                    "prepared tcId {tc_id}"
+                );
             }
-            ("derive", "invalid") => assert_eq!(
-                x301(&secret, &public).err(),
-                Some(adversarial_error(expected_error)),
-                "tcId {tc_id}"
-            ),
+            ("derive", "invalid") => {
+                let expected = adversarial_error(expected_error);
+                assert_eq!(x301(&secret, &public).err(), Some(expected), "tcId {tc_id}");
+                match prepare_peer(&public) {
+                    Ok(prepared) => assert_eq!(
+                        shared_secret_prepared(&secret, &prepared).err(),
+                        Some(expected),
+                        "prepared tcId {tc_id}"
+                    ),
+                    Err(error) => assert_eq!(error, expected, "prepare tcId {tc_id}"),
+                }
+            }
             ("public_from_secret", "valid") => assert_eq!(
                 public_from_secret(&secret)
                     .unwrap_or_else(|error| panic!("tcId {tc_id}: {error:?}"))
@@ -373,9 +419,14 @@ fn d4_rejects_every_affine_main_and_twist_cofactor_coordinate() {
     // The identity has no affine u encoding.
     for public in [zero, one, MODULUS_MINUS_ONE] {
         assert_eq!(validate_public_encoding(&public), Ok(()));
+        let prepared = prepare_peer(&public).expect("canonical low-order input prepares");
         for secret in [SECRET_A, [0_u8; SECRET_BYTES], [0xff_u8; SECRET_BYTES]] {
             assert!(matches!(
                 shared_secret(&secret, &public),
+                Err(X301Error::AllZeroSharedSecret)
+            ));
+            assert!(matches!(
+                shared_secret_prepared(&secret, &prepared),
                 Err(X301Error::AllZeroSharedSecret)
             ));
         }
@@ -538,6 +589,22 @@ fn x301_python_oracle_matches_10000_cases_and_torsion_derivation() {
         let shared_b = shared_secret(&secret_b, &expected_public_a).expect("B with A");
         assert_eq!(shared_a.as_bytes(), &expected_shared, "case {cases}");
         assert_eq!(shared_b.as_bytes(), &expected_shared, "case {cases}");
+        let prepared_a = prepare_peer(&expected_public_a).expect("public A prepares");
+        let prepared_b = prepare_peer(&expected_public_b).expect("public B prepares");
+        let prepared_shared_a =
+            shared_secret_prepared(&secret_a, &prepared_b).expect("prepared A with B");
+        let prepared_shared_b =
+            shared_secret_prepared(&secret_b, &prepared_a).expect("prepared B with A");
+        assert_eq!(
+            prepared_shared_a.as_bytes(),
+            &expected_shared,
+            "prepared A case {cases}"
+        );
+        assert_eq!(
+            prepared_shared_b.as_bytes(),
+            &expected_shared,
+            "prepared B case {cases}"
+        );
         last_line = Some(line);
         cases += 1;
     }

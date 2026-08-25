@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added lazy public-peer preparation for repeated X301 derive. A regular
+  signed width-5 comb reuses the existing field backend, scans all 16 table
+  entries in each of 61 rounds, and falls back to the ladder for first-use,
+  twist and exceptional inputs. Dual-lane paired measurements are 35.93 and
+  35.67 microseconds, respectively 1.527x and 1.524x X25519; one-shot latency
+  remains within 1.1% of the prior path. Boundary, 559-case, 10,000-case,
+  taint, codegen, duplicate-context and lifecycle gates cover the change.
 - Added a pinned, fresh-process ABBA benchmark runner for EVP key generation,
   prepared derive and KEM operations. It binds every session to source, lane,
   provider and benchmark hashes, records host/load/affinity provenance, and

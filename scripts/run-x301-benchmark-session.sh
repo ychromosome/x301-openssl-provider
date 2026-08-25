@@ -7,7 +7,7 @@ umask 077
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 if (( $# < 6 || $# > 7 )); then
-    printf 'usage: %s <keygen|derive|kem-keygen|encaps|decaps> <openssl-prefix> <baseline-modules> <candidate-modules> <cpu> <fresh-output-dir> [count]\n' "$0" >&2
+    printf 'usage: %s <keygen|derive|derive-prepare|derive-total|kem-keygen|encaps|decaps> <openssl-prefix> <baseline-modules> <candidate-modules> <cpu> <fresh-output-dir> [count]\n' "$0" >&2
     exit 2
 fi
 
@@ -20,7 +20,8 @@ OUTPUT=$6
 COUNT=${7:-}
 case "$OPERATION" in
     keygen) COUNT=${COUNT:-2000}; CONTROL=X25519; CONTROL_BYTES=32 ;;
-    derive) COUNT=${COUNT:-4000}; CONTROL=X25519; CONTROL_BYTES=32 ;;
+    derive|derive-prepare|derive-total)
+        COUNT=${COUNT:-4000}; CONTROL=X25519; CONTROL_BYTES=32 ;;
     kem-keygen|encaps|decaps)
         COUNT=${COUNT:-1000}; CONTROL=ML-KEM-1024; CONTROL_BYTES=0 ;;
     *) printf 'unsupported operation: %s\n' "$OPERATION" >&2; exit 2 ;;
@@ -58,6 +59,11 @@ BENCH=$OUTPUT/x301_bench
     -I"$PREFIX/include" "$ROOT/performance/x301_bench.c" \
     -L"$LIBDIR" -Wl,-rpath,"$LIBDIR" -lcrypto -o "$BENCH"
 
+CANDIDATE_SOURCE_MANIFEST=${ED301_CANDIDATE_SOURCE_MANIFEST:-MISSING}
+if [[ -f $CANDIDATE_SOURCE_MANIFEST && ! -L $CANDIDATE_SOURCE_MANIFEST ]]; then
+    (cd "$ROOT" && sha256sum --strict --quiet -c "$CANDIDATE_SOURCE_MANIFEST")
+fi
+
 {
     printf 'format=x301-benchmark-session-v1\n'
     printf 'timestamp_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -65,7 +71,11 @@ BENCH=$OUTPUT/x301_bench
     printf 'affinity=%s\n' "$(taskset -pc $$ | sed 's/^[^:]*: //')"
     printf 'hostname=%s\n' "$(hostname)"
     printf 'kernel=%s\n' "$(uname -srvmo)"
-    printf 'cpu_model=%s\n' "$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | head -n 1)"
+    printf 'cpu_model=%s\n' "$(sed -n '/^model name[[:space:]]*: / {
+        s/^model name[[:space:]]*: //
+        p
+        q
+    }' /proc/cpuinfo)"
     printf 'loadavg=%s\n' "$(sed -n '1p' /proc/loadavg)"
     governor=/sys/devices/system/cpu/cpu"$CPU"/cpufreq/scaling_governor
     turbo=/sys/devices/system/cpu/intel_pstate/no_turbo
@@ -110,7 +120,7 @@ provenance_ok=1
     (( baseline_provider_count > 0 )) || provenance_ok=0
     (( candidate_provider_count > 0 )) || provenance_ok=0
     hash_if_present baseline-source-manifest "${ED301_BASELINE_SOURCE_MANIFEST:-MISSING}" || provenance_ok=0
-    hash_if_present candidate-source-manifest "${ED301_CANDIDATE_SOURCE_MANIFEST:-MISSING}" || provenance_ok=0
+    hash_if_present candidate-source-manifest "$CANDIDATE_SOURCE_MANIFEST" || provenance_ok=0
     hash_if_present lane-evidence-manifest "${ED301_LANE_EVIDENCE_MANIFEST:-MISSING}" || provenance_ok=0
 } >"$OUTPUT/artifacts.tsv"
 if (( provenance_ok == 1 )); then : >"$OUTPUT/PROVENANCE_COMPLETE"; fi
@@ -149,7 +159,8 @@ run_one() {
     (( status == 0 )) || return "$status"
 }
 
-if [[ $OPERATION == keygen || $OPERATION == derive ]]; then
+if [[ $OPERATION == keygen || $OPERATION == derive \
+        || $OPERATION == derive-prepare || $OPERATION == derive-total ]]; then
     TARGET_ALGORITHM=X301; TARGET_PROPERTIES=provider=x301; TARGET_BYTES=38
 else
     TARGET_ALGORITHM=X301MLKEM1024; TARGET_PROPERTIES=provider=x301; TARGET_BYTES=0

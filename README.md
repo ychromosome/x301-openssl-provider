@@ -18,12 +18,12 @@ NamedGroup `0xFE2E` is test-only and is not an IANA allocation.
 | Component | Status |
 |---|---|
 | Ed301-EdDSA | Frozen draft-00 byte contract; integration candidate |
-| X301 | Pre-freeze integration candidate; local functional, provider, TLS, taint and codegen gates pass |
-| X301MLKEM1024 | Private-use assurance candidate; local dual-lane TLS gates pass |
+| X301 | Pre-freeze candidate; current remediation is under final local gates |
+| X301MLKEM1024 | Private-use candidate; re-review follows the X301 rerun |
 
-Independent X301 security and performance reviews remain pending. None of the
-three components is released or approved for production use. See `STATUS.md`
-for the precise completed and open gates.
+Independent reviews produced repair work; the latest changes still require
+fresh independent re-review. None of the three components is released or
+approved for production use. See `STATUS.md` for completed and open gates.
 
 ## Design boundaries
 
@@ -31,6 +31,8 @@ for the precise completed and open gates.
 - X301 public keys and shared secrets are 38-byte little-endian u-coordinates.
 - Key generation uses OpenSSL's application-linked private RAND path.
 - Derivation rejects non-canonical peer keys and an all-zero shared secret.
+- Repeated main-curve derive may use a constant-time public-peer comb; first
+  use and twist inputs retain the RFC-7748-shaped ladder.
 - X301MLKEM1024 obtains ML-KEM-1024 exclusively from OpenSSL's default
   provider. The project contains no ML-KEM implementation and no hybrid KDF.
 - Hybrid values are concatenated ML-KEM first, following the documented TLS
