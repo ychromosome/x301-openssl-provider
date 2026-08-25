@@ -413,7 +413,7 @@ a standards-conformance claim:
 | T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | PASS on both exact lanes, including fresh component digests across resumption, fallback and no-common-group failure |
 | T9 | ML-KEM mutation, all-zero X301 and boundary mutations | PASS on both exact lanes; wire mutation fails protected-record authentication without an explicit KEM error |
 | T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | PASS: 35 ML-KEM-1024 cases/105 checks on 3.5.7 and 36 cases/108 checks on 4.0.1 |
-| T11 | fifth taint case `x301-derive`, preserving the existing four | Pending the commit-bound, read-only archive gate |
+| T11 | add `x301-derive` while preserving the existing public/sign cases, each in defined and tainted mode | PASS: all six cases on the read-only archive of commit `3942e59feafa791a5d40b5eab7a5cf017021e72f`; source manifest `151d014d40f864fc86bd8c4a7e00c5bb1eee15ca2189fb29c9f22ae6a21728b6` |
 | T12 | ladder/cswap/field disassembly gate | PASS on both final provider modules: 301 rounds, one fixed loop edge, 64 `cmov`, one public-index scalar read |
 | T13 | scalar, ladder-state and shared-secret zeroization | PASS for the named-owner boundary; all six dual-lane provider Valgrind runs are clean |
 
@@ -423,8 +423,9 @@ independent oracle has 10 tests. Each OpenSSL lane has 10 raw-X301, 16 hybrid
 and 8 key-separation harness checks in addition to its native ML-KEM data.
 `fmt`, `clippy -D warnings`, rustdoc, both feature states, GCC `-fanalyzer`,
 Clang static analysis, final codegen and the materialized twist evidence in
-Section 8 pass. T11 remains the sole acceptance item not yet bound to a
-committed, read-only archive.
+Section 8 pass. The final T11 run additionally verifies the source tree both
+before and after all six Valgrind cases, so every T1-T13 item is now bound to
+the committed product snapshot or to its explicitly named binary lane.
 
 ## 11. Simplicity and implementation limits
 
