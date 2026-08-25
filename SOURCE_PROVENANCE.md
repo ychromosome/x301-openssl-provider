@@ -36,18 +36,34 @@ The implementation reused or consulted the following paths in commit
 | `secret-taint/valgrind-client/c/valgrind_client.c` | byte-identical test helper | `6aaa953e1375e8bada6c462ecfedf28659491df0` | `df01647f67bb77f8cdd894aa67fe721f2ff1960acb2c4757a52e7ac25253db19` |
 | `secret-taint/valgrind-client/src/lib.rs` | byte-identical test helper | `b99fda8a3a8e266a565d458b98b5e89e2cdca84d` | `704238f245a73618c8aae3911a22e91115f21b3f8324e6d5d8d30338bcf077c3` |
 
-The candidate copies remove unrelated X301 helpers and narrow interfaces for
-draft-00. The scalar, transcript and signature layers adapt implementation
+The original Ed301-EdDSA candidate removed the donor repository's historical
+X301 helpers and narrowed its interfaces for draft-00. The current X301 module
+is a later additive implementation with the separate provenance recorded
+below. The scalar, transcript and signature layers adapt implementation
 patterns but rewrite the incompatible byte-contract semantics; the historical
-signature semantics are not reused. The
-Valgrind client is test-only and remains outside the public crate's safe Rust
-boundary. The square-root exponentiation delegates to the bounded,
+signature semantics are not reused. The Valgrind client is test-only and
+remains outside the public crate's safe Rust boundary. The square-root
+exponentiation delegates to the bounded,
 constant-schedule Montgomery exponentiation supplied by the same pinned
 `crypto-bigint 0.7.5` dependency; the project-specific 76-byte scalar reducer
 remains explicit.
 
 The Git blob identifiers and SHA-256 values above preserve the exact origin
 mapping without making the historical repository part of this source tree.
+
+## X301 and hybrid sources
+
+X301 was implemented additively from the frozen ED301 parameters, the RFC
+7748 ladder and birational-map pattern, and the OpenSSL provider contracts
+listed in `docs/X301_DRAFT.md`. It reuses the existing 5x64 field backend; no
+X301 arithmetic source was imported from the historical donor repository.
+The independent Python implementation under `reference/x301/` is test-only
+and is not linked into the product.
+
+X301MLKEM1024 follows the published TLS hybrid layout named in
+`docs/X301_DRAFT.md`. ML-KEM-1024 is fetched from each normative OpenSSL
+default provider. This repository contains no ML-KEM implementation, copied
+ML-KEM subroutine, hybrid KDF or standalone hybrid encoding.
 
 ## Safe-Rust performance repair input
 

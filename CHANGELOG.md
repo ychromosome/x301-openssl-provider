@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Replaced X301 public-key generation's generic 301-round basepoint ladder
+  with the existing constant-time Ed301 fixed-base table and a direct
+  one-inversion projective map. Public keys remain byte-identical to the
+  ladder and independent Python oracle; dedicated scalar-boundary, taint and
+  final-codegen gates cover the new path. Local EVP key generation improved
+  from about 97.4 to 36.6--37.0 microseconds, reducing hybrid key generation
+  by about 46% and encapsulation by about 30% without changing derive or wire
+  bytes.
+- Refocused the repository entry and status documents on X301 and
+  X301MLKEM1024, removing superseded Ed301 development chronology while
+  retaining the normative drafts, implementation registers and evidence.
 - Added the optional, safe-Rust X301 core by reusing the existing 5x64 field,
   with strict 38-byte u encodings, cofactor-4 clamping, mandatory all-zero
   rejection, an independent Python oracle and RFC-7748-shaped KAT, iteration,

@@ -14,8 +14,9 @@ the canonical Fedora Rust toolchain changes.
 ## X301 arithmetic constraint
 
 Date: 2026-08-25. Source: RFC 7748 Sections 4-6 and the frozen ED301 field
-contract. This section records required reuse; it does not assert that pending
-product and provider tests pass.
+contract. This section records required reuse and the evidence expected from
+each implementation; it does not turn passing local tests into a production
+claim.
 
 | Area | Required implementation | Why no separate implementation is permitted | Required permanent evidence |
 | --- | --- | --- | --- |

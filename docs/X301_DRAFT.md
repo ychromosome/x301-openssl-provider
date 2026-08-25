@@ -414,8 +414,8 @@ a standards-conformance claim:
 | T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | PASS on both exact lanes, including fresh component digests across resumption, fallback and no-common-group failure |
 | T9 | ML-KEM mutation, all-zero X301 and boundary mutations | PASS on both exact lanes; wire mutation fails protected-record authentication without an explicit KEM error |
 | T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | PASS: 35 ML-KEM-1024 cases/105 checks on 3.5.7 and 36 cases/108 checks on 4.0.1 |
-| T11 | add `x301-derive` while preserving the existing public/sign cases, each in defined and tainted mode | PASS: all six cases on the final read-only archive snapshot; its externally anchored source-manifest digest is recorded in the sealed result bundle |
-| T12 | ladder/cswap/field disassembly gate | PASS on both final provider modules: 301 rounds, one fixed loop edge, 64 `cmov`, one public-index scalar read |
+| T11 | cover public derivation, signing, X301 key generation and X301 derive, each in defined and tainted mode | PASS: all eight cases on the final read-only archive snapshot; its externally anchored source-manifest digest is recorded in the sealed result bundle |
+| T12 | ladder/cswap/field and fixed-base key-generation disassembly gate | PASS on both final provider modules: the generic derive retains 301 rounds, one fixed loop edge, 64 `cmov` and one public-index scalar read; key generation retains branchless fixed-base selection and exactly one projective-map inversion |
 | T13 | scalar, ladder-state and shared-secret zeroization | PASS for the named-owner boundary; direct/hybrid EVP lifecycle and reduced long-handshake lanes are Valgrind-clean on both OpenSSL versions |
 
 ### 10.1 Extended adversarial assurance
@@ -443,17 +443,18 @@ Valgrind/T11 lane.  The deterministic F sweep is complete for its explicitly
 declared length, deletion, insertion, bit and byte-value grids; it is not a
 coverage-guided fuzzing claim.
 
-The current core run has 44 default-feature tests and 57 `x301` tests in both
-debug and release, plus the separately executed ignored 1,000-property,
-10,000-case differential and 1,000,000-iteration tests. The independent oracle
-has 12 ordinary tests plus the separate slow L1 recomputation. Each OpenSSL
+The current core run has 44 default-feature tests. With `x301` enabled it
+registers 58 tests: 55 run in the ordinary debug/release matrix and the
+1,000-property, 10,000-case differential and 1,000,000-iteration tests are
+three explicitly ignored long lanes executed separately. The independent
+oracle has 12 ordinary tests plus the separate slow L1 recomputation. Each OpenSSL
 lane runs the raw-X301, hybrid, key-separation, state-machine, failure,
 structured-sweep and native ML-KEM data matrices with their individual counts
 recorded in the sealed result bundle.
 `fmt`, `clippy -D warnings`, rustdoc, both feature states, GCC `-fanalyzer`,
 Clang static analysis, final codegen and the materialized twist evidence in
 Section 8 pass. The final T11 run additionally verifies the source tree both
-before and after all six Valgrind cases, so every T1-T13 item is now bound to
+before and after all eight Valgrind cases, so every T1-T13 item is now bound to
 the committed product snapshot or to its explicitly named binary lane.
 
 ## 11. Simplicity and implementation limits
@@ -479,7 +480,7 @@ The measured production counts are:
 
 | Surface | Physical lines | Nonblank, non-comment source lines | Budget |
 | --- | ---: | ---: | ---: |
-| X301 core before its test-only section | 264 | 160 | under 400 |
+| X301 core before its test-only section | 278 | 168 | under 400 |
 | `hybrid_kem.c` | 583 | 516 | |
 | hybrid-only blocks in `provider_shim.c` | 81 | 80 | |
 | Hybrid total | 664 | 596 | under 600 source lines |

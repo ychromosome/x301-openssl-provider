@@ -6,13 +6,15 @@ expand its claims or silently change the draft-00 byte contract.
 
 Before proposing a change:
 
-1. read `README.md`, `STATUS.md`, `ZEROIZATION_AND_CT_BOUNDARY.md` and the
-   immutable inputs under `inputs/round4/`;
-2. preserve the context-free one-shot API and exact encodings unless a new,
-   incompatible profile is explicitly proposed;
-3. update tests and provenance for every behavioral change;
-4. regenerate `SOURCE_MANIFEST.sha256`; and
-5. run `sh scripts/check.sh` and, where Valgrind is available,
+1. read `README.md`, `STATUS.md`, `ZEROIZATION_AND_CT_BOUNDARY.md`, the
+   applicable draft under `docs/`, and the immutable inputs under
+   `inputs/round4/`;
+2. preserve Ed301-EdDSA's context-free one-shot API and the documented X301
+   and hybrid encodings unless a new incompatible profile is proposed;
+3. keep Ed301 and X301 key domains separate;
+4. update tests and provenance for every behavioral change;
+5. regenerate `SOURCE_MANIFEST.sha256`; and
+6. run `sh scripts/check.sh` and, where Valgrind is available,
    `sh scripts/check-secret-taint.sh`.
 
 Changes to X301 or X301MLKEM1024 additionally require the dual-lane provider
