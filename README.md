@@ -80,6 +80,9 @@ scripts/check-x301-long.sh
 Set `X301_TLS_LONG_HANDSHAKES=1000` for the separate long TLS lane. Detailed
 coverage is listed in `docs/X301_EXTENDED_ASSURANCE.md`.
 
+Pinned ABBA performance sessions and their provenance requirements are defined
+in `docs/PERFORMANCE_MEASUREMENT.md`.
+
 ## Repository map
 
 - `crates/ed301-eddsa/src/x301.rs`: X301 core.

@@ -42,8 +42,9 @@ Medians on one Ryzen 9 5950X host, measured separately on both OpenSSL lanes:
 
 The key-generation optimization preserves byte-identical public keys and uses
 the existing constant-time fixed-base table plus one projective-map inversion.
-Prepared derive is intentionally unchanged. These values are regression
-baselines, not portable performance guarantees.
+Prepared derive is intentionally unchanged. These are local reference values,
+not portable guarantees. A 3% regression classification is valid only for the
+paired, provenance-bound procedure in `docs/PERFORMANCE_MEASUREMENT.md`.
 
 ## Toolchain boundary
 

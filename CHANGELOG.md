@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added a pinned, fresh-process ABBA benchmark runner for EVP key generation,
+  prepared derive and KEM operations. It binds every session to source, lane,
+  provider and benchmark hashes, records host/load/affinity provenance, and
+  permits a 3% regression finding only with stable controls and a confirming
+  deterministic instruction count. Review bundles can now carry a separately
+  hashed Git bundle so commit ancestry is independently verifiable.
 - Replaced X301 public-key generation's generic 301-round basepoint ladder
   with the existing constant-time Ed301 fixed-base table and a direct
   one-inversion projective map. Public keys remain byte-identical to the
