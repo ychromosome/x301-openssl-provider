@@ -430,9 +430,9 @@ a standards-conformance claim:
 | T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | PASS on both exact lanes, including fresh component digests across resumption, fallback and no-common-group failure |
 | T9 | ML-KEM mutation, all-zero X301 and boundary mutations | PASS on both exact lanes; wire mutation fails protected-record authentication without an explicit KEM error |
 | T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | PASS: 35 ML-KEM-1024 cases/105 checks on 3.5.7 and 36 cases/108 checks on 4.0.1 |
-| T11 | cover public derivation, signing, X301 key generation, ladder derive and prepared derive, each in defined and tainted mode | Pending final sealed rerun: the development build passes all ten Valgrind cases |
-| T12 | ladder/cswap/field, fixed-base key-generation and prepared-comb disassembly gate | Pending final sealed rerun: the development module has one fixed 301-round ladder edge and a 61-row, 16-entry full-scan prepared comb with no secret-dependent branch or address observed |
-| T13 | scalar, ladder/comb state and shared-secret zeroization | Pending final sealed rerun for the prepared path; the earlier direct/hybrid EVP lifecycle and reduced long-handshake lanes are Valgrind-clean on both OpenSSL versions |
+| T11 | cover public derivation, signing, X301 key generation, ladder derive and prepared derive, each in defined and tainted mode | PASS: all ten cases on the final read-only archive snapshot; its externally anchored source-manifest digest is recorded with the run |
+| T12 | ladder/cswap/field, fixed-base key-generation and prepared-comb disassembly gate | PASS on both final provider modules: one fixed 301-round ladder edge and a 61-row, 16-entry full-scan prepared comb; dynamic taint supplies the complementary secret-address check |
+| T13 | scalar, ladder/comb state and shared-secret zeroization | PASS for the named-owner boundary; direct and hybrid EVP lifecycle lanes are Valgrind-clean on both OpenSSL versions |
 
 ### 10.1 Extended adversarial assurance
 
@@ -469,8 +469,8 @@ structured-sweep and native ML-KEM data matrices with their individual counts
 recorded in the sealed result bundle.
 `fmt`, `clippy -D warnings`, rustdoc, both feature states, GCC `-fanalyzer`,
 Clang static analysis, final codegen and the materialized twist evidence in
-Section 8 passed for the preceding snapshot. The new prepared path requires a
-fresh sealed T11-T13 rerun before those claims transfer to the next commit.
+Section 8 pass. The final T11 run verifies the source tree before and after all
+ten Valgrind cases; T12 is bound to the two provider-module hashes.
 
 ## 11. Simplicity and implementation limits
 

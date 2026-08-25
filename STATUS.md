@@ -18,11 +18,9 @@ domain and does not change Ed301-EdDSA bytes or verification semantics.
 - Core tests in both feature states and release profiles.
 - Frozen KATs, 1,000 deterministic properties, 10,000 independent Python
   differentials and the separate one-million-iteration reproduction.
-- Ten development Valgrind secret-taint cases covering Ed301 public/sign and
-  X301 keygen/ladder/prepared derive, each in defined and tainted form; the
-  prepared-path sealed rerun remains open.
-- Development final-provider disassembly gate including the prepared comb;
-  the sealed dual-lane rerun remains open.
+- Ten sealed Valgrind secret-taint cases covering Ed301 public/sign and X301
+  keygen/ladder/prepared derive, each in defined and tainted form.
+- Final-provider disassembly gates on both lanes, including the prepared comb.
 - Dual-lane KEYMGMT/KEYEXCH, raw-key, failure, sanitizer, Valgrind and ML-KEM
   integration contracts.
 - TLS 1.3 normal, HRR, fragmentation, mutation, resumption and cross-lane
@@ -36,11 +34,11 @@ Medians on one Ryzen 9 5950X host, measured separately on both OpenSSL lanes:
 
 | Operation | OpenSSL 3.5.7 | OpenSSL 4.0.1 |
 |---|---:|---:|
-| X301 key generation | 36.98 us | 36.60 us |
-| Prepared X301 derive | 35.93 us | 35.67 us |
-| X25519 prepared derive control | 23.53 us | 23.41 us |
-| X301/X25519 prepared ratio | 1.527x | 1.524x |
-| One-shot X301 setup plus first derive | 93.10 us | 93.20 us |
+| X301 key generation | 36.97 us | 36.68 us |
+| Prepared X301 derive | 35.48 us | 35.70 us |
+| X25519 prepared derive control | 23.48 us | 23.89 us |
+| X301/X25519 prepared ratio | 1.511x | 1.496x |
+| One-shot X301 setup plus first derive | 93.28 us | 93.43 us |
 | Hybrid key generation | 73.87 us | 73.19 us |
 | Hybrid encapsulation | 146.04 us | 145.75 us |
 | Hybrid decapsulation | 120.02 us | 119.70 us |

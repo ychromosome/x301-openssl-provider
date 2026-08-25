@@ -187,7 +187,18 @@ for variant in baseline candidate; do
         "$BENCH" "$OPERATION" "$TARGET_ALGORITHM" "$TARGET_PROPERTIES" \
         "$modules" "$TARGET_BYTES" 1 >"$log" 2>&1 || status=$?
     instructions=$(callgrind_annotate --inclusive=yes --auto=no "$callgrind" \
-        | awk '/PROGRAM TOTALS/{gsub(/,/, "", $1); print $1; exit}')
+        | awk '
+            !found && /PROGRAM TOTALS/ {
+                gsub(/,/, "", $1)
+                value = $1
+                found = 1
+            }
+            END {
+                if (!found)
+                    exit 1
+                print value
+            }
+        ')
     printf '%s\t%s\t%s\t%s\n' "$variant" "$status" "$instructions" "$(basename "$callgrind")" >>"$OUTPUT/ir.tsv"
 done
 
