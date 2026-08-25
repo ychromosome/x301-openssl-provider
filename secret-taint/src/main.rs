@@ -3,12 +3,15 @@ use std::{env, process::ExitCode};
 use ed301_eddsa::{
     SigningKey,
     parameters::{PUBLIC_KEY_BYTES, SEED_BYTES, SIGNATURE_BYTES},
+    x301::{PUBLIC_BYTES as X301_PUBLIC_BYTES, SHARED_BYTES as X301_SHARED_BYTES, x301},
 };
 use ed301_valgrind_client::{get_vbits, make_defined, mark_undefined, running_on_valgrind};
 
 const SECRET_ENV: &str = "ED301_CT_SECRET_HEX";
 const EXPECTED_PUBLIC_ENV: &str = "ED301_CT_EXPECTED_PUBLIC_HEX";
 const EXPECTED_SIGNATURE_ENV: &str = "ED301_CT_EXPECTED_SIGNATURE_HEX";
+const X301_PUBLIC_ENV: &str = "ED301_CT_X301_PUBLIC_HEX";
+const X301_SHARED_ENV: &str = "ED301_CT_X301_SHARED_HEX";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Mode {
@@ -50,6 +53,7 @@ fn run() -> Result<(), String> {
     match case.as_str() {
         "public" => run_public(mode)?,
         "sign" => run_sign(mode)?,
+        "x301-derive" => run_x301_derive(mode)?,
         _ => return Err(format!("unsupported case: {case}")),
     }
     println!(
@@ -95,6 +99,22 @@ fn run_sign(mode: Mode) -> Result<(), String> {
     Ok(())
 }
 
+fn run_x301_derive(mode: Mode) -> Result<(), String> {
+    let mut scalar = required_array::<SEED_BYTES>(SECRET_ENV)?;
+    let public = required_array::<X301_PUBLIC_BYTES>(X301_PUBLIC_ENV)?;
+    let expected = required_array::<X301_SHARED_BYTES>(X301_SHARED_ENV)?;
+    apply_mode(mode, &mut scalar);
+    let shared = x301(&scalar, &public).map_err(|_| "X301 derive failed")?;
+    require_secret_vbits(mode, shared.as_bytes())?;
+    make_defined(&mut scalar);
+    let mut observed = *shared.as_bytes();
+    make_defined(&mut observed);
+    if observed != expected {
+        return Err("X301 shared-secret KAT mismatch".into());
+    }
+    Ok(())
+}
+
 fn apply_mode<const N: usize>(mode: Mode, secret: &mut [u8; N]) {
     if mode == Mode::Tainted {
         mark_undefined(secret);
@@ -107,6 +127,18 @@ fn require_public_vbits(mode: Mode, value: &[u8]) -> Result<(), String> {
         && vbits.iter().any(|byte| *byte != 0)
     {
         return Err("public output was not declassified".into());
+    }
+    Ok(())
+}
+
+fn require_secret_vbits(mode: Mode, value: &[u8]) -> Result<(), String> {
+    let vbits = validity_bits(value)?;
+    let has_undefined_bits = vbits.iter().any(|byte| *byte != 0);
+    if mode == Mode::Defined && has_undefined_bits {
+        return Err("defined X301 input produced undefined output".into());
+    }
+    if mode == Mode::Tainted && !has_undefined_bits {
+        return Err("X301 shared secret crossed an unintended declassification boundary".into());
     }
     Ok(())
 }

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added the optional, safe-Rust X301 core by reusing the existing 5x64 field,
+  with strict 38-byte u encodings, cofactor-4 clamping, mandatory all-zero
+  rejection, an independent Python oracle and RFC-7748-shaped KAT, iteration,
+  boundary, small-order and 10,000-case differential tests. Added a distinct
+  OpenSSL KEYMGMT/KEYEXCH and the private-use `X301MLKEM1024` TLS group: ML-KEM-
+  1024 remains entirely OpenSSL-default-provider-owned, values are concatenated
+  ML-KEM first without a project KDF, and no standalone hybrid profile is
+  defined. Dual OpenSSL 3.5.7/4.0.1 provider, TLS, lifecycle, failure, taint and
+  code-generation gates bind the experimental integration.
 - Integrated the independently produced Package-A Python implementation as a
   hash-bound, immutable test oracle after its 109/109 Package-B blind result.
   A narrow adapter accepts only immutable byte strings and exposes no raw

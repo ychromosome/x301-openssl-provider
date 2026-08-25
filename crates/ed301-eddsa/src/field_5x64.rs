@@ -9,6 +9,8 @@
 //! the Montgomery oracle.
 
 use crypto_bigint::{Choice, CtAssign, CtEq, CtOption};
+#[cfg(feature = "x301")]
+use zeroize::Zeroize;
 
 use crate::parameters::FIELD_BYTES;
 
@@ -324,11 +326,31 @@ impl Fe301 {
         selected.ct_assign(&when_true.0, choice);
         Self(selected)
     }
+
+    /// Swap two field elements with the constant-time selection primitive.
+    ///
+    /// This is the RFC 7748 section 5 `cswap` operation; it deliberately
+    /// reuses the ED301 five-limb representation and selection path.
+    #[cfg(feature = "x301")]
+    #[inline(always)]
+    pub(crate) fn conditional_swap(left: &mut Self, right: &mut Self, choice: Choice) {
+        let original_left = *left;
+        let original_right = *right;
+        *left = Self::conditional_select(original_left, original_right, choice);
+        *right = Self::conditional_select(original_right, original_left, choice);
+    }
 }
 
 impl Default for Fe301 {
     fn default() -> Self {
         Self::ZERO
+    }
+}
+
+#[cfg(feature = "x301")]
+impl Zeroize for Fe301 {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
     }
 }
 

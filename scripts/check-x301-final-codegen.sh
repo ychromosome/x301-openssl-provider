@@ -1,0 +1,225 @@
+#!/bin/sh
+set -eu
+
+# Final-binary X301 ladder gate.
+# Sources: RFC 7748 Section 5 fixed Montgomery ladder; X301 decisions D2-D4;
+# the repository constant-time contract.  This gate is intentionally tied to
+# the reviewed x86-64 Rust lowering and must be rerun after every toolchain
+# change.  Dynamic secret-address/control-flow coverage remains the job of
+# check-secret-taint.sh; this script binds the actual provider machine code.
+
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+
+if [ "$#" -ne 2 ]; then
+    printf 'usage: %s <x301-provider.so> <new-evidence-directory>\n' "$0" >&2
+    exit 2
+fi
+MODULE=$1
+EVIDENCE=$2
+
+for tool in /usr/bin/awk /usr/bin/gawk /usr/bin/grep /usr/bin/mkdir \
+        /usr/bin/nm /usr/bin/objdump /usr/bin/readelf /usr/bin/sha256sum; do
+    test -x "$tool" || {
+        echo "missing codegen tool: $tool" >&2
+        exit 127
+    }
+done
+test -f "$MODULE" && test ! -L "$MODULE" || {
+    echo "module must be a regular non-symlink file" >&2
+    exit 2
+}
+test ! -e "$EVIDENCE" || {
+    echo "evidence directory already exists: $EVIDENCE" >&2
+    exit 2
+}
+/usr/bin/mkdir -m 700 "$EVIDENCE"
+
+/usr/bin/readelf -h "$MODULE" >"$EVIDENCE/elf-header.txt"
+/usr/bin/grep -Eq 'Type:[[:space:]]+DYN \(Shared object file\)$' \
+    "$EVIDENCE/elf-header.txt"
+/usr/bin/grep -Eq \
+    'Machine:[[:space:]]+Advanced Micro Devices X86-64$' \
+    "$EVIDENCE/elf-header.txt"
+/usr/bin/readelf -S "$MODULE" >"$EVIDENCE/elf-sections.txt"
+/usr/bin/grep -Eq '[[:space:]]\.symtab[[:space:]]+SYMTAB[[:space:]]' \
+    "$EVIDENCE/elf-sections.txt"
+
+DUMP=$EVIDENCE/provider.objdump
+X301=$EVIDENCE/x301.asm
+LOOP=$EVIDENCE/x301-ladder-loop.asm
+SUMMARY=$EVIDENCE/summary.txt
+/usr/bin/objdump -d -C --no-show-raw-insn --disassemble-zeroes --wide \
+    "$MODULE" >"$DUMP"
+/usr/bin/nm -C --defined-only "$MODULE" >"$EVIDENCE/provider.nm"
+: >"$SUMMARY"
+
+extract_symbol() {
+    symbol=$1
+    output=$2
+    count=$(/usr/bin/awk -v symbol="$symbol" '
+        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ &&
+                index($0, "<" symbol ">:") != 0 { count++ }
+        END { print count + 0 }
+    ' "$DUMP")
+    test "$count" -eq 1 || {
+        printf 'expected one symbol %s, found %s\n' "$symbol" "$count" >&2
+        exit 1
+    }
+    /usr/bin/awk -v symbol="$symbol" '
+        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
+            active = index($0, "<" symbol ">:") != 0
+        }
+        active { print }
+    ' "$DUMP" >"$output"
+    test -s "$output"
+}
+
+forbidden_straight_line() {
+    /usr/bin/awk '
+        /^[[:space:]]*[[:xdigit:]]+:/ {
+            mnemonic = $2
+            if ((mnemonic ~ /^j/ && mnemonic !~ /^jmpq?$/) ||
+                    mnemonic ~ /^loop/ || mnemonic ~ /^div/ ||
+                    mnemonic ~ /^idiv/ || mnemonic == "ud2" ||
+                    mnemonic == "int3") {
+                print
+                bad = 1
+            }
+        }
+        END { exit bad ? 0 : 1 }
+    ' "$1"
+}
+
+extract_symbol 'ed301_eddsa::x301::x301' "$X301"
+
+# Reject variable-time arithmetic and traps anywhere in the X301 function.
+# Public decode/failure branches and the fixed safegcd loops are recorded but
+# deliberately not misrepresented as branch-free.
+if /usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ &&
+            ($2 ~ /^loop/ || $2 ~ /^div/ || $2 ~ /^idiv/ ||
+             $2 == "ud2" || $2 == "int3") { print; bad = 1 }
+    END { exit bad ? 0 : 1 }
+' "$X301"; then
+    echo "forbidden instruction in final X301 function" >&2
+    exit 1
+fi
+/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { print }
+' "$X301" >"$EVIDENCE/x301-all-branches.txt"
+
+# The compiler inlines ladder/cswap into x301().  Locate the loop from the
+# public fixed counter value 300 through its first backward conditional edge.
+/usr/bin/gawk '
+    /^[[:space:]]*[[:xdigit:]]+:/ {
+        address = $1
+        sub(/:$/, "", address)
+        if (index($0, "$0x12c,%edx") != 0)
+            active = 1
+        if (active)
+            print
+        if (active && $2 ~ /^j/ && $2 !~ /^jmpq?$/ &&
+                $3 ~ /^[[:xdigit:]]+$/ &&
+                strtonum("0x" $3) < strtonum("0x" address))
+            exit
+    }
+' "$X301" >"$LOOP"
+test -s "$LOOP"
+
+branches=$(/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { count++ }
+    END { print count + 0 }
+' "$LOOP")
+test "$branches" -eq 1 || {
+    echo "ladder loop contains non-fixed conditional control flow" >&2
+    exit 1
+}
+/usr/bin/grep -Eq \
+    '^[[:space:]]*[[:xdigit:]]+:[[:space:]]+jb[[:space:]]+[[:xdigit:]]+' \
+    "$LOOP" || {
+    echo "reviewed fixed 301-round loop edge changed" >&2
+    exit 1
+}
+if /usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ &&
+            ($2 ~ /^loop/ || $2 ~ /^div/ || $2 ~ /^idiv/ ||
+             $2 == "ud2" || $2 == "int3" || $2 ~ /^jmp/) {
+        print
+        bad = 1
+    }
+    END { exit bad ? 0 : 1 }
+' "$LOOP"; then
+    echo "forbidden ladder-loop instruction" >&2
+    exit 1
+fi
+
+cmov=$(/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^cmov/ { count++ }
+    END { print count + 0 }
+' "$LOOP")
+test "$cmov" -ge 40 || {
+    echo "constant-time swap/select lowering changed" >&2
+    exit 1
+}
+
+# Exactly one indexed read is permitted: the scalar byte selected by the
+# public fixed loop counter. Valgrind T11 independently proves its address is
+# defined when the scalar contents are tainted.
+/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
+            $2 !~ /^lea/ { print }
+' "$LOOP" >"$EVIDENCE/x301-indexed-memory.txt"
+test "$(/usr/bin/awk 'END { print NR + 0 }' \
+        "$EVIDENCE/x301-indexed-memory.txt")" -eq 1
+/usr/bin/grep -Eq 'movzbl[[:space:]]+[^,]*\(%rsp,%rcx,1\),%ecx$' \
+    "$EVIDENCE/x301-indexed-memory.txt"
+
+# The inlined ladder may call only the existing shared field backend.
+/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^call/ {
+        line = $0
+        sub(/^.*</, "", line)
+        sub(/>.*/, "", line)
+        print line
+    }
+' "$LOOP" >"$EVIDENCE/x301-ladder-calls.txt"
+test "$(/usr/bin/grep -c '^ed301_eddsa::field_5x64::reduce_wide$' \
+        "$EVIDENCE/x301-ladder-calls.txt")" -eq 10
+test "$(/usr/bin/grep -c '^ed301_eddsa::field_5x64::square_wide$' \
+        "$EVIDENCE/x301-ladder-calls.txt")" -eq 4
+test "$(/usr/bin/awk 'END { print NR + 0 }' \
+        "$EVIDENCE/x301-ladder-calls.txt")" -eq 14
+
+for entry in \
+        'field-reduce:ed301_eddsa::field_5x64::reduce_wide' \
+        'field-square:ed301_eddsa::field_5x64::square_wide'; do
+    label=${entry%%:*}
+    symbol=${entry#*:}
+    section=$EVIDENCE/$label.asm
+    extract_symbol "$symbol" "$section"
+    if forbidden_straight_line "$section"; then
+        echo "shared field primitive is no longer branch-free: $symbol" >&2
+        exit 1
+    fi
+done
+
+# Checker negative control: a synthetic conditional edge must be rejected.
+NEGATIVE=$EVIDENCE/negative-control.asm
+/usr/bin/awk '{ print } END { print "deadbeef: jne deadbeef" }' \
+    "$EVIDENCE/field-reduce.asm" >"$NEGATIVE"
+if ! forbidden_straight_line "$NEGATIVE" >/dev/null; then
+    echo "codegen checker negative control failed" >&2
+    exit 1
+fi
+
+printf 'PASS x301_ladder_rounds=301 loop_branches=1 cmov=%s indexed_reads=1\n' \
+    "$cmov" | tee -a "$SUMMARY"
+printf '%s\n' \
+    'PASS field_backend=ed301_eddsa::field_5x64 branch_free=1' \
+    'PASS negative_control=conditional-edge-rejected' | tee -a "$SUMMARY"
+/usr/bin/sha256sum "$MODULE" "$DUMP" "$X301" "$LOOP" "$SUMMARY" \
+    >"$EVIDENCE/SHA256SUMS"
+printf 'PASS x301_final_codegen module_sha256=%s evidence=%s\n' \
+    "$(/usr/bin/sha256sum "$MODULE" | /usr/bin/awk '{ print $1 }')" \
+    "$EVIDENCE"

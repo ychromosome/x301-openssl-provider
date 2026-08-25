@@ -1,8 +1,10 @@
-//! Rust implementation candidate for `Ed301-EdDSA-draft-00`.
+//! Rust implementation candidate for `Ed301-EdDSA-draft-00`, with an optional
+//! additive X301 key-exchange core following the RFC 7748 ladder pattern.
 //!
-//! The crate implements only the context-free, one-shot byte contract bound
-//! by the Round-4 source manifest. It is review software, not a production or
-//! standards-conformance claim.
+//! The default build implements only the context-free, one-shot Ed301 byte
+//! contract bound by the Round-4 source manifest. The `x301` feature does not
+//! alter that contract or permit Ed301/X301 key reuse. This remains review
+//! software, not a production or standards-conformance claim.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -22,6 +24,8 @@ pub mod signature;
 mod signature_hash;
 #[cfg(test)]
 mod test_support;
+#[cfg(feature = "x301")]
+pub mod x301;
 
 pub use signature::{
     ExpandedSigningKey, Signature, SignatureError, SigningKey, VerifyingKey, sign,
@@ -30,3 +34,5 @@ pub use signature::{
 
 #[cfg(test)]
 mod vector_tests;
+#[cfg(all(test, feature = "x301"))]
+mod x301_tests;

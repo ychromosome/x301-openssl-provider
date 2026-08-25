@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ed301-eddsa-provider"]
+members = ["crates/ed301-eddsa-provider", "crates/x301-provider"]
 resolver = "3"
 
 [workspace.package]

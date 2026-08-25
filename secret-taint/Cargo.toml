@@ -14,10 +14,13 @@ autobenches = false
 
 [features]
 default = ["instrumented"]
-instrumented = ["ed301-eddsa/secret-taint-instrumentation"]
+instrumented = [
+    "ed301-eddsa/secret-taint-instrumentation",
+    "ed301-eddsa/x301",
+]
 
 [dependencies]
-ed301-eddsa = { path = "../crates/ed301-eddsa" }
+ed301-eddsa = { path = "../crates/ed301-eddsa", features = ["x301"] }
 ed301-valgrind-client = { path = "valgrind-client" }
 
 [[bin]]

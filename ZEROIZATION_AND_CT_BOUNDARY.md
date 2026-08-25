@@ -13,6 +13,15 @@ create additional stack, register or ABI copies beyond the named owners. The
 candidate therefore makes no forensic stack-remanence or every-copy
 zeroization claim.
 
+The optional X301 core follows the same boundary. Its raw scalar, persistent
+Montgomery-ladder state, projective output and returned 38-byte shared secret
+have non-`Copy` RAII owners that clear on normal return, error and unwinding.
+The provider additionally clears its 38-byte raw derive buffer and the complete
+70-byte `ML-KEM-SS || X301-SS` temporary on every exit after creation. Per-round
+`Fe301` products and inversion temporaries remain by-value values covered by
+the every-physical-copy disclaimer above; T13 is therefore a named-owner
+claim, not a forensic stack-erasure claim.
+
 The provider seed-import boundary constructs the fixed-size seed directly
 inside its non-`Copy`, zeroizing owner. It no longer creates a plain Rust
 array and then copies that array into the owner. The C key-generation buffer
@@ -49,6 +58,12 @@ The separate Valgrind harness marks the seed undefined and exercises public
 key derivation and signing through explicit public-output boundaries. It is a
 preliminary control-flow and memory check for one local build, not a proof of
 constant-time execution, complete zeroization or fault resistance.
+
+With the `x301` feature, the same harness also marks the X301 private scalar
+undefined and exercises the complete 301-round derive path. The final-module
+gate separately inspects the ladder, conditional swaps and shared 5x64 field
+symbols. These observations are compiler- and binary-specific and do not
+strengthen the general limitation above.
 
 Secret fixed-base multiplication uses signed radix 16 with a fixed number of
 digits. Every digit scans all eight entries in its table and selects with

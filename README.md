@@ -55,6 +55,30 @@ rules.
 The provider is an integration candidate, not a release.  See
 `PROVIDER_STATUS.md`.
 
+## Experimental X301 integration
+
+The local X301 integration adds a distinct raw `X301` KEYMGMT/KEYEXCH and an
+opt-in `X301MLKEM1024` TLS 1.3 group. The latter delegates ML-KEM-1024 entirely
+to OpenSSL's default provider and supplies no standalone hybrid format or KDF.
+Its project contract is `docs/X301_DRAFT.md`.
+
+After authenticating sealed OpenSSL 3.5.7 and 4.0.1 lanes, run the dual-lane
+provider and TLS matrices with the lane roots and their external evidence
+digests:
+
+```sh
+scripts/test-x301-provider-contracts.sh \
+    /trusted/openssl-3.5.7-lane <3.5.7-evidence-sha256> \
+    /trusted/openssl-4.0.1-lane <4.0.1-evidence-sha256>
+scripts/test-x301-tls.sh \
+    /trusted/openssl-3.5.7-lane <3.5.7-evidence-sha256> \
+    /trusted/openssl-4.0.1-lane <4.0.1-evidence-sha256>
+```
+
+The private NamedGroup `0xFE2E` is test-only and not an IANA allocation.
+X301/X301MLKEM1024 remain experimental assurance candidates, not production
+cryptography.
+
 ## Status
 
 Round-2 post-finding-repair candidate awaiting a fresh full-scope deep scan.

@@ -1,0 +1,28 @@
+[package]
+name = "x301-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Experimental OpenSSL provider adapter for X301 and TLS X301MLKEM1024"
+build = "build.rs"
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[lib]
+name = "x301"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[features]
+default = []
+test-failpoint = []
+tls-x301-mlkem1024 = []
+
+[dependencies]
+crypto-bigint = { version = "=0.7.5", default-features = false }
+ed301-eddsa = { path = "../../../crates/ed301-eddsa", features = ["x301"] }
+zeroize = { version = "=1.9.0", default-features = false }

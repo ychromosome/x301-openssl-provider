@@ -1,6 +1,6 @@
 # OpenSSL pattern decisions and deviations
 
-Date: 2026-08-24
+Date: 2026-08-24; X301 additions: 2026-08-25
 
 This register records which OpenSSL Ed25519/Ed448 test patterns are adopted
 for the optional Ed301 PKI integration and where the draft-00 byte contract
@@ -66,6 +66,22 @@ this optional profile.
 | ID | Decision and contract source | Enforcement |
 | --- | --- | --- |
 | L6 | Use real provider-owned failure boundaries only. The `provider_hardening` signature-duplicate failpoint and the `provider_rand` generate-failure path are retained. No product hook is added merely to simulate host RAND installation failure, `pthread` failure, or allocation inside OpenSSL PKI containers, because those operations are not provider-owned. Revisit only if a combined PKI-plus-failpoint provider is deliberately built and reviewed. | Existing hardening and RAND failure tests; host-owned failures remain outside the product failpoint surface. |
+
+## X301 and X301MLKEM1024 decisions
+
+The controlling full contract is `X301_DRAFT.md`. RFC 7748, RFC 9846,
+RFC 9954, RFC 10024, FIPS 203 and the OpenSSL 3.5.7/4.0.1 provider manuals are
+normative for the patterns named below; the ED301-specific choices remain
+experimental.
+
+| ID | Decision and contract source | Enforcement |
+| --- | --- | --- |
+| X-D2 | **Deliberate RFC-7748-pattern deviation:** the 38-byte X301 decoder is strict. Bits 301-303 and every integer `u>=p` reject; no X25519-style masking or noncanonical reduction occurs. One field value has one byte encoding. | Independent T3 vectors and Rust/provider boundaries cover `p`, `p+1`, bits 301/302/303 separately and together, and lengths 37/39. |
+| X-D4 | RFC 7748's all-zero recommendation is mandatory for both direct KEYEXCH and TLS use, translating the X25519/X448 requirement in RFC 9846 Section 7.4.2. Failure returns no partial output. | Independent T4 derives canonical u encodings `0`, `1` and `p-1`; direct EVP tests reject all three atomically in both KAT directions, and the hybrid test propagates the all-zero failure. |
+| X-H1 | X301MLKEM1024 follows RFC 10024's X25519MLKEM768 ordering, not the SecP/ML-KEM ordering: ML-KEM bytes precede X301 bytes in client share, server share and shared secret. | Exact 1606/1606/70-byte layouts, 1605/1607 totals, and delete/insert mutations at offset 1568 are tested. |
+| X-H3 | FIPS 203 implicit rejection remains OpenSSL-owned. A successful OpenSSL decapsulation that yields the implicit-rejection secret is not converted into a provider error. The resulting TLS traffic-key mismatch aborts record authentication; TLS 1.3 does not guarantee that the first observable failure is `Finished`. Actual EVP errors, X301 all-zero and length failures abort the whole group immediately. | Direct deterministic implicit-rejection test plus a real server-wire ciphertext mutation; the latter fails at the first protected server record without an explicit KEM error or accepted handshake. |
+| X-E5 | OpenSSL `TLS-GROUP` with `is-kem=1` requires libssl to fetch KEYMGMT/KEM and call EVP encapsulation/decapsulation. X301MLKEM1024 therefore has a technically ordinary EVP-fetchable adapter. **This is not a standalone hybrid-KEM profile:** no non-TLS OID, KDF, persistence, codec or compatibility commitment is defined. | EVP fetch/dispatch and complete dual-lane TLS tests enforce the minimal surface; review MUST reject any extra standalone surface. |
+| X-H5 | Ed301 and X301 use distinct key types. Cross-supplying their `EVP_PKEY` objects fails; no provider seed-conversion path exists. Deliberate application reuse of the same raw bytes is separately forbidden because type checks cannot detect it. RFC 9846 Section 4.3.8 additionally forbids local KeyShare reuse across connections. | Cross-type EVP negatives, independent key generation and fresh key shares across resumption are tested. |
 
 ## Review rule
 
