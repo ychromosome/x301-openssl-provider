@@ -1,7 +1,9 @@
 # Provider status
 
-The `provider-experiment` branch contains an experimental,
-signature-only OpenSSL provider for `Ed301-EdDSA-draft-00`.
+The ordinary Ed301-EdDSA module is an experimental, signature-only OpenSSL
+provider for `Ed301-EdDSA-draft-00`. X301 and X301MLKEM1024 are separate
+additive provider surfaces documented in `docs/X301_DRAFT.md` and
+`docs/X301_EXTENDED_ASSURANCE.md`.
 
 The provider and its evidence boundary were repaired on 2026-08-23 after an
 18-finding deep scan. The 2026-08-24 performance-review revision keeps the

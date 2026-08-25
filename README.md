@@ -11,7 +11,8 @@ This repository contains three related experimental components over ED301:
 The components share field arithmetic but use separate key domains.  Start
 with `inputs/round4/ED301-EdDSA-draft.md` for the signature byte contract,
 `docs/X301_DRAFT.md` for X301 and the hybrid construction, and
-`PROVIDER_STATUS.md` for the assurance boundary.
+`PROVIDER_STATUS.md` for the Ed301 provider boundary. X301's additional test
+boundary is documented in `docs/X301_EXTENDED_ASSURANCE.md`.
 
 The cryptographic Rust core is:
 
@@ -108,8 +109,8 @@ cryptography.
 
 None of these components is production-ready.
 
-See `STATUS.md` and `ZEROIZATION_AND_CT_BOUNDARY.md` for the current assurance
-boundary.
+See `STATUS.md` and `ZEROIZATION_AND_CT_BOUNDARY.md` for the Ed301 component's
+current assurance boundary.
 
 ## License
 
