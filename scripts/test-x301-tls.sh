@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dual-lane X301 T8 CLI contract runner.
+# Dual-lane and cross-lane X301 TLS robustness runner (T8, R1-R7).
 #
 # Contract sources: RFC 9846 Sections 4.3.7-4.3.8 and 4.6.1 (TLS 1.3
 # NamedGroup, fresh KeyShare, and session tickets), RFC 9954 (hybrid design),
@@ -14,7 +14,9 @@ umask 077
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 KEYSHARE_PARSER=$ROOT/provider-tests/x301/extract_x301_client_keyshare.py
-WIRE_MUTATOR=$ROOT/provider-tests/x301/mutate_x301_mlkem_server_ciphertext.py
+TRACE_INSPECTOR=$ROOT/provider-tests/x301/inspect_x301_tls_trace.py
+WIRE_MUTATOR=$ROOT/provider-tests/x301/mutate_x301_tls_keyshare.py
+LONG_HANDSHAKES=${X301_TLS_LONG_HANDSHAKES:-0}
 SERVER_PID=
 SERVER_LOG=
 SERVER_PORT=
@@ -51,11 +53,13 @@ record_run_identity() {
         find Cargo.toml Cargo.lock \
             crates/ed301-eddsa/Cargo.toml crates/ed301-eddsa/src \
             docs/X301_DRAFT.md docs/X301_CONSTRUCTION_REGISTER.md \
+            docs/X301_EXTENDED_ASSURANCE.md \
             docs/OPENSSL_PATTERN_DEVIATIONS.md docs/OID_REGISTRY.md \
             provider/Cargo.toml provider/Cargo.lock \
             provider/crates/x301-provider provider-tests/x301 reference/x301 \
             secret-taint/Cargo.toml secret-taint/src \
-            scripts/check-secret-taint.sh scripts/check-x301-final-codegen.sh \
+            scripts/check.sh scripts/check-secret-taint.sh \
+            scripts/check-x301-final-codegen.sh scripts/check-x301-long.sh \
             scripts/test-x301-provider-contracts.sh scripts/test-x301-tls.sh \
             scripts/verify-openssl-provider-lane.sh \
             -type f -exec sha256sum {} + | sort -k2
@@ -77,6 +81,10 @@ fail() {
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
 }
+
+case "$LONG_HANDSHAKES" in
+    ''|*[!0-9]*) fail "X301_TLS_LONG_HANDSHAKES must be a nonnegative integer" ;;
+esac
 
 cleanup_server() {
     if test -n "$PROXY_PID" && kill -0 "$PROXY_PID" 2>/dev/null; then
@@ -126,10 +134,17 @@ start_server() {
     local label=${10}
     local provider_args=(-provider default)
     local attempt
+    local server_timeout=45
 
     cleanup_server
     if test "$load_x301" = yes; then
         provider_args+=(-provider x301)
+    fi
+    if test "$accepts" -ge 64; then
+        server_timeout=300
+    fi
+    if test "$accepts" -ge 1000; then
+        server_timeout=1800
     fi
     SERVER_LOG=$home/$label-server.log
 
@@ -140,7 +155,7 @@ start_server() {
         env -i PATH=/usr/bin:/bin LC_ALL=C HOME="$home" \
             OPENSSL_CONF=/dev/null OPENSSL_MODULES="$modules" \
             LD_LIBRARY_PATH="$prefix/lib" \
-            /usr/bin/timeout 45 \
+            /usr/bin/timeout "$server_timeout" \
             "$openssl" s_server \
                 -accept "127.0.0.1:$SERVER_PORT" -tls1_3 \
                 -groups "$groups" -cert "$cert" -key "$key" \
@@ -166,14 +181,21 @@ start_server() {
 
 start_wire_mutator() {
     local home=$1
+    local label=$2
+    local direction=$3
+    local component=$4
+    local mode=$5
+    local case_index=$6
     local proxy_port
 
     test -z "$PROXY_PID" || fail "wire mutator is already running"
     proxy_port=$(choose_port)
-    PROXY_LOG=$home/mlkem-wire-mutation-proxy.log
+    PROXY_LOG=$home/$label-proxy.log
     : >"$PROXY_LOG"
     /usr/bin/python3 -u "$WIRE_MUTATOR" \
         --listen-port "$proxy_port" --upstream-port "$SERVER_PORT" \
+        --direction "$direction" --component "$component" \
+        --mode "$mode" --case-index "$case_index" \
         >"$PROXY_LOG" 2>&1 &
     PROXY_PID=$!
     CLIENT_PORT=$proxy_port
@@ -273,6 +295,227 @@ field_value() {
     ' "$file"
 }
 
+run_mutation_matrix() {
+    local openssl=$1
+    local prefix=$2
+    local modules=$3
+    local home=$4
+    local cert=$5
+    local key=$6
+    local direction=$7
+    local component=$8
+    local label=$9
+    local mutation_dir=$home/r5-$label
+    local case_index case_label client_status encrypted plaintext_alerts stage
+
+    mkdir -m 700 -p "$mutation_dir"
+    printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
+        >"$mutation_dir/request.txt"
+    printf 'case\tdirection\tcomponent\tclient_status\tfailure_stage\tencrypted_records\n' \
+        >"$mutation_dir/RESULTS.tsv"
+    start_server "$openssl" "$prefix" "$modules" "$mutation_dir" \
+        "$cert" "$key" X301MLKEM1024 64 yes "$label"
+    for case_index in $(/usr/bin/seq 0 63); do
+        case_label=$(printf 'case-%02d' "$case_index")
+        start_wire_mutator "$mutation_dir" "$case_label" \
+            "$direction" "$component" flip "$case_index"
+        if run_client "$openssl" "$prefix" "$modules" "$mutation_dir" \
+                "$cert" X301MLKEM1024 "$case_label" -brief; then
+            fail "$label mutation $case_index unexpectedly completed"
+        else
+            client_status=$?
+        fi
+        test "$client_status" -eq 1 \
+            || fail "$label mutation $case_index returned $client_status"
+        finish_wire_mutator
+        require_text "mutated=1 mode=flip direction=$direction" "$PROXY_LOG"
+        require_text "component=$component case_index=$case_index" "$PROXY_LOG"
+        reject_text 'CONNECTION ESTABLISHED' \
+            "$mutation_dir/$case_label-client.log"
+        encrypted=$(/usr/bin/awk '
+            /^encrypted_records_after_mutation=/ {
+                split($1, value, "="); print value[2]; exit
+            }
+        ' "$PROXY_LOG")
+        plaintext_alerts=$(/usr/bin/awk '
+            /^encrypted_records_after_mutation=/ {
+                split($2, value, "="); print value[2]; exit
+            }
+        ' "$PROXY_LOG")
+        test -n "$encrypted" && test -n "$plaintext_alerts" \
+            || fail "$label mutation $case_index has no stage counters"
+        if test "$encrypted" -ge 1; then
+            require_text 'bad record mac' \
+                "$mutation_dir/$case_label-client.log"
+            stage=protected-record-auth
+        else
+            test "$direction" = client && test "$plaintext_alerts" -ge 1 \
+                || fail "$label mutation $case_index failed before protected records without a plaintext alert"
+            require_text 'alert illegal parameter' \
+                "$mutation_dir/$case_label-client.log"
+            stage=share-parsing
+        fi
+        if test "$direction" = server; then
+            test "$stage" = protected-record-auth \
+                || fail "server ML-KEM mutation $case_index failed too early"
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$case_index" "$direction" "$component" \
+            "$client_status" "$stage" "$encrypted" \
+            >>"$mutation_dir/RESULTS.tsv"
+    done
+    finish_server no
+    test "$(/usr/bin/awk 'END { print NR - 1 }' \
+        "$mutation_dir/RESULTS.tsv")" -eq 64
+    (
+        cd "$mutation_dir"
+        find . -type f ! -name SHA256SUMS -exec sha256sum {} + | sort -k2
+    ) >"$mutation_dir/SHA256SUMS"
+}
+
+run_foreign_size_negative() {
+    local openssl=$1
+    local prefix=$2
+    local modules=$3
+    local home=$4
+    local cert=$5
+    local key=$6
+    local negative_dir=$home/r6-foreign-size
+    local client_status
+
+    mkdir -m 700 -p "$negative_dir"
+    printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
+        >"$negative_dir/request.txt"
+    start_server "$openssl" "$prefix" "$modules" "$negative_dir" \
+        "$cert" "$key" X301MLKEM1024 1 yes foreign-size
+    start_wire_mutator "$negative_dir" foreign-size \
+        client mlkem foreign-size 0
+    if run_client "$openssl" "$prefix" "$modules" "$negative_dir" \
+            "$cert" X301MLKEM1024 foreign-size -brief; then
+        fail "1216-byte foreign share unexpectedly completed"
+    else
+        client_status=$?
+    fi
+    test "$client_status" -eq 1 \
+        || fail "foreign-size client returned $client_status"
+    finish_wire_mutator
+    finish_server no
+    require_text 'mutated=1 mode=foreign-size direction=client' "$PROXY_LOG"
+    require_text 'original_length=1606 replacement_length=1216' "$PROXY_LOG"
+    require_text 'encrypted_records_after_mutation=0' "$PROXY_LOG"
+    require_text 'plaintext_alerts_after_mutation=1' "$PROXY_LOG"
+    require_text 'alert illegal parameter' \
+        "$negative_dir/foreign-size-client.log"
+    reject_text 'CONNECTION ESTABLISHED' \
+        "$negative_dir/foreign-size-client.log"
+}
+
+run_cross_lane() {
+    local client_lane=$1
+    local client_root=$2
+    local server_lane=$3
+    local server_root=$4
+    local label=$5
+    local client_prefix=$client_root/inst/$client_lane
+    local server_prefix=$server_root/inst/$server_lane
+    local client_openssl=$client_prefix/bin/openssl
+    local server_openssl=$server_prefix/bin/openssl
+    local client_modules=$RESULT_ROOT/$client_lane/modules
+    local server_modules=$RESULT_ROOT/$server_lane/modules
+    local server_cert=$RESULT_ROOT/$server_lane/cert.pem
+    local server_key=$RESULT_ROOT/$server_lane/key.pem
+    local cross=$RESULT_ROOT/$label
+
+    mkdir -m 700 -p "$cross"
+    printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
+        >"$cross/request.txt"
+    start_server "$server_openssl" "$server_prefix" "$server_modules" \
+        "$cross" "$server_cert" "$server_key" \
+        X301MLKEM1024 1 yes "$label"
+    run_client "$client_openssl" "$client_prefix" "$client_modules" \
+        "$cross" "$server_cert" X301MLKEM1024 "$label"
+    require_text 'New, TLSv1.3' "$cross/$label-client.log"
+    require_text 'Protocol: TLSv1.3' "$cross/$label-client.log"
+    require_text 'Negotiated TLS1.3 group: X301MLKEM1024' \
+        "$cross/$label-client.log"
+    require_text 'Verification: OK' "$cross/$label-client.log"
+    finish_server yes
+    /usr/bin/sha256sum "$cross/$label-client.log" "$SERVER_LOG" \
+        >"$cross/SHA256SUMS"
+    printf 'PASS client=%s server=%s group=X301MLKEM1024\n' \
+        "$client_lane" "$server_lane" >"$cross/STATUS.txt"
+}
+
+run_long_handshake_lane() {
+    local openssl=$1
+    local prefix=$2
+    local modules=$3
+    local parent=$4
+    local cert=$5
+    local key=$6
+    local count=$7
+    local long=$parent/l2-long-handshakes
+    local iteration
+
+    test "$count" -gt 0 || return 0
+    mkdir -m 700 -p "$long"
+    printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
+        >"$long/request.txt"
+    printf 'iteration\tresult\n' >"$long/RESULTS.tsv"
+
+    # L2 full lane: every invocation creates a new process and a new TLS 1.3
+    # connection; the server offers only X301MLKEM1024, so success proves a
+    # complete fresh hybrid handshake rather than fallback.
+    start_server "$openssl" "$prefix" "$modules" "$long" \
+        "$cert" "$key" X301MLKEM1024 "$count" yes l2-full
+    for iteration in $(/usr/bin/seq 1 "$count"); do
+        run_client "$openssl" "$prefix" "$modules" "$long" "$cert" \
+            X301MLKEM1024 current -brief
+        require_text 'Negotiated TLS1.3 group: X301MLKEM1024' \
+            "$long/current-client.log"
+        require_text 'Verification: OK' "$long/current-client.log"
+        if test "$iteration" -eq 1; then
+            cp "$long/current-client.log" "$long/first-client.log"
+        fi
+        printf '%s\tPASS\n' "$iteration" >>"$long/RESULTS.tsv"
+    done
+    cp "$long/current-client.log" "$long/last-client.log"
+    finish_server yes
+    test "$(/usr/bin/awk 'END { print NR - 1 }' "$long/RESULTS.tsv")" \
+        -eq "$count"
+
+    # Reduced memory-safety lane: s_client performs the initial connection
+    # and five reconnects in one Valgrind process, exercising module reuse,
+    # TLS resumption and repeated hybrid key shares without multiplying the
+    # already-complete 1,000-connection runtime.
+    start_server "$openssl" "$prefix" "$modules" "$long" \
+        "$cert" "$key" X301MLKEM1024 6 yes l2-valgrind
+    env -i PATH=/usr/bin:/bin LC_ALL=C HOME="$long" \
+        OPENSSL_CONF=/dev/null OPENSSL_MODULES="$modules" \
+        LD_LIBRARY_PATH="$prefix/lib" \
+        /usr/bin/timeout 300 /usr/bin/valgrind --tool=memcheck --vgdb=no \
+            --error-exitcode=99 --track-origins=yes \
+            --undef-value-errors=yes --leak-check=full \
+            --errors-for-leak-kinds=definite,indirect,possible --quiet \
+            "$openssl" s_client \
+                -connect "127.0.0.1:$CLIENT_PORT" -tls1_3 \
+                -groups X301MLKEM1024 -servername localhost \
+                -verify_hostname localhost -verify_return_error \
+                -CAfile "$cert" -provider default -provider x301 \
+                -reconnect -brief <"$long/request.txt" \
+                >"$long/valgrind-client.log" 2>&1
+    require_text 'Negotiated TLS1.3 group: X301MLKEM1024' \
+        "$long/valgrind-client.log"
+    require_text 'Verification: OK' "$long/valgrind-client.log"
+    finish_server yes
+
+    /usr/bin/sha256sum "$modules/x301.so" "$long/RESULTS.tsv" \
+        "$long/first-client.log" "$long/last-client.log" \
+        "$long/valgrind-client.log" >"$long/SHA256SUMS"
+    printf 'PASS full_hybrid_handshakes=%s valgrind_connections=6\n' \
+        "$count" | tee "$long/STATUS.txt"
+}
+
 run_lane() {
     local lane=$1
     local lane_root=$2
@@ -292,6 +535,7 @@ run_lane() {
         "$lane_root" "$lane" "$lane_evidence"
     test -x "$openssl" || fail "missing normative OpenSSL $lane executable"
     test -x "$KEYSHARE_PARSER" || fail "missing executable $KEYSHARE_PARSER"
+    test -x "$TRACE_INSPECTOR" || fail "missing executable $TRACE_INSPECTOR"
     test -x "$WIRE_MUTATOR" || fail "missing executable $WIRE_MUTATOR"
     mkdir -m 700 -p "$target" "$modules" "$cargo_home" "$build"
     printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
@@ -368,6 +612,32 @@ run_lane() {
     test "$first_x301" != "$resumed_x301" \
         || fail "X301 component was reused across session resumption"
 
+    # R2: the first ClientHello carries only X25519 while advertising both
+    # groups.  The hybrid-only server selects 0xFE2E in HRR, and the second
+    # ClientHello must contain one exact 1606-byte hybrid share.
+    start_server "$openssl" "$prefix" "$modules" "$build" "$cert" "$key" \
+        X301MLKEM1024 1 yes hrr
+    run_client "$openssl" "$prefix" "$modules" "$build" "$cert" \
+        X25519:X301MLKEM1024 hrr -msg -msgfile "$build/hrr.msg"
+    require_text 'Negotiated TLS1.3 group: X301MLKEM1024' \
+        "$build/hrr-client.log"
+    "$TRACE_INSPECTOR" --hrr "$build/hrr.msg" \
+        | tee "$build/hrr-inspection.txt"
+    finish_server yes
+
+    # R3: force the 1778-byte ClientHello into <=512-byte TLS records and
+    # prove both the record split and the intact 1606-byte inner share.
+    start_server "$openssl" "$prefix" "$modules" "$build" "$cert" "$key" \
+        X301MLKEM1024 1 yes fragmented
+    run_client "$openssl" "$prefix" "$modules" "$build" "$cert" \
+        X301MLKEM1024 fragmented -max_send_frag 512 \
+        -msg -msgfile "$build/fragmented.msg"
+    require_text 'Negotiated TLS1.3 group: X301MLKEM1024' \
+        "$build/fragmented-client.log"
+    "$TRACE_INSPECTOR" --fragment-max 512 "$build/fragmented.msg" \
+        | tee "$build/fragmented-inspection.txt"
+    finish_server yes
+
     # The peer has no x301 provider.  Offering hybrid first and X25519 second
     # must therefore complete using the common RFC 9846 group X25519.
     start_server "$openssl" "$prefix" "$modules" "$build" "$cert" "$key" \
@@ -398,54 +668,69 @@ run_lane() {
     require_text 'Alert' "$build/no-common.msg"
     finish_server no
 
-    # T9 wire proof: flip one bit only in the ML-KEM ciphertext portion of the
-    # ServerHello KeyShare.  FIPS 203 implicit rejection must remain internal:
-    # the ServerHello is accepted, then the mismatched TLS handshake key causes
-    # failure while decrypting the protected post-ServerHello flight.
-    start_server "$openssl" "$prefix" "$modules" "$build" "$cert" "$key" \
-        X301MLKEM1024 1 yes mlkem-wire-mutation
-    start_wire_mutator "$build"
-    if run_client "$openssl" "$prefix" "$modules" "$build" "$cert" \
-            X301MLKEM1024 mlkem-wire-mutation -brief -msg \
-            -msgfile "$build/mlkem-wire-mutation.msg"; then
-        fail "ML-KEM ciphertext mutation unexpectedly completed a handshake"
-    else
-        client_status=$?
-    fi
-    test "$client_status" -eq 1 \
-        || fail "ML-KEM mutation client status is $client_status, expected 1"
-    finish_wire_mutator
-    finish_server no
-    require_text 'mutated=1 group=0xfe2e key_exchange_length=1606 component=mlkem' \
-        "$build/mlkem-wire-mutation-proxy.log"
-    require_text 'encrypted_records_after_mutation=' \
-        "$build/mlkem-wire-mutation-proxy.log"
-    require_text 'bad record mac' "$build/mlkem-wire-mutation-client.log"
-    reject_text 'CONNECTION ESTABLISHED' "$build/mlkem-wire-mutation-client.log"
-    reject_text 'Negotiated TLS1.3 group:' "$build/mlkem-wire-mutation-client.log"
+    # R5: 64 uniformly distributed deterministic single-bit mutations in
+    # each required wire component.  Each reaches protected-record
+    # authentication and fails; server-ciphertext cases thereby preserve
+    # FIPS 203 implicit rejection rather than becoming an explicit KEM error.
+    run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key" client mlkem client-mlkem
+    run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key" client x301 client-x301
+    run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key" server mlkem server-mlkem
+
+    # R6: retain the X301MLKEM1024 codepoint but shrink the syntactically
+    # well-formed KeyShareEntry to X25519MLKEM768's 1216-byte layout.
+    run_foreign_size_negative "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key"
+
+    run_long_handshake_lane "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key" "$LONG_HANDSHAKES"
 
     /usr/bin/sha256sum \
         "$modules/x301.so" \
         "$build/hybrid-initial.msg" \
         "$build/hybrid-resumed.msg" \
+        "$build/hrr.msg" \
+        "$build/hrr-inspection.txt" \
+        "$build/fragmented.msg" \
+        "$build/fragmented-inspection.txt" \
         "$build/hybrid-initial-client.log" \
         "$build/hybrid-resumed-client.log" \
         "$build/fallback-client.log" \
         "$build/no-common-client.log" \
-        "$build/mlkem-wire-mutation-client.log" \
-        "$build/mlkem-wire-mutation-proxy.log" >"$build/SHA256SUMS"
+        "$build/r5-client-mlkem/RESULTS.tsv" \
+        "$build/r5-client-mlkem/SHA256SUMS" \
+        "$build/r5-client-x301/RESULTS.tsv" \
+        "$build/r5-client-x301/SHA256SUMS" \
+        "$build/r5-server-mlkem/RESULTS.tsv" \
+        "$build/r5-server-mlkem/SHA256SUMS" \
+        "$build/r6-foreign-size/foreign-size-client.log" \
+        "$build/r6-foreign-size/foreign-size-proxy.log" >"$build/SHA256SUMS"
+    if test "$LONG_HANDSHAKES" -gt 0; then
+        /usr/bin/sha256sum \
+            "$build/l2-long-handshakes/STATUS.txt" \
+            "$build/l2-long-handshakes/SHA256SUMS" \
+            "$build/l2-long-handshakes/l2-full-server.log" \
+            "$build/l2-long-handshakes/l2-valgrind-server.log" \
+            >>"$build/SHA256SUMS"
+    fi
     printf '%s\n' \
-        "PASS lane=$lane lane_evidence_sha256=$lane_evidence t8_hybrid=PASS t8_resumption=PASS" \
-        't8_fresh_mlkem=PASS t8_fresh_x301=PASS t8_fallback=PASS t8_no_common=PASS' \
-        't9_mlkem_wire_implicit_rejection=PASS' \
+        "PASS lane=$lane lane_evidence_sha256=$lane_evidence t8_hybrid=PASS r2_hrr=PASS r3_fragmentation=PASS" \
+        'r4_fallback=PASS r4_no_common=PASS r5_client_mlkem=64/64 r5_client_x301=64/64' \
+        "r5_server_mlkem=64/64 r6_foreign_size=PASS r7_resumption=PASS r7_fresh_mlkem=PASS r7_fresh_x301=PASS l2_full_handshakes=$LONG_HANDSHAKES" \
         | tee "$build/STATUS.txt"
 }
 
 record_run_identity
 run_lane 3.5.7 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
 run_lane 4.0.1 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
+run_cross_lane 3.5.7 "$LANE_357_ROOT" 4.0.1 "$LANE_401_ROOT" \
+    cross-357-client-401-server
+run_cross_lane 4.0.1 "$LANE_401_ROOT" 3.5.7 "$LANE_357_ROOT" \
+    cross-401-client-357-server
 sha256sum "$RESULT_ROOT/X301_SOURCE_SHA256SUMS" \
     "$RESULT_ROOT/TOOLCHAIN.txt" "$RESULT_ROOT/RUN_INPUTS.tsv" \
     >"$RESULT_ROOT/RUN_IDENTITY_SHA256SUMS"
-printf 'PASS X301 T8 both_lanes=2 result=%s\n' "$RESULT_ROOT" \
+printf 'PASS X301 TLS R1-R7 both_lanes=2 cross_lanes=2 result=%s\n' "$RESULT_ROOT" \
     | tee "$RESULT_ROOT/STATUS.txt"

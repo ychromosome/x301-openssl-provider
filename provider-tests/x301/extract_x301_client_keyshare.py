@@ -43,10 +43,15 @@ def take_vector(
     return take(data, offset, length, label)
 
 
-def first_outgoing_client_hello(trace: str) -> bytes:
+def handshake_messages(
+    trace: str, direction: str, handshake_name: str, handshake_type: int
+) -> list[bytes]:
     lines = trace.splitlines()
-    marker = re.compile(r"^>>> .*Handshake .*ClientHello$")
+    marker = re.compile(
+        rf"^{re.escape(direction)} .*Handshake .*{re.escape(handshake_name)}$"
+    )
     hex_line = re.compile(r"^\s+(?:[0-9A-Fa-f]{2}(?:\s+|$))+$")
+    messages: list[bytes] = []
 
     for index, line in enumerate(lines):
         if not marker.match(line):
@@ -57,17 +62,33 @@ def first_outgoing_client_hello(trace: str) -> bytes:
                 break
             octets.extend(encoded.split())
         if not octets:
-            raise ParseError("ClientHello marker has no hexadecimal body")
+            raise ParseError(f"{handshake_name} marker has no hexadecimal body")
         message = bytes.fromhex("".join(octets))
-        if len(message) < 4 or message[0] != 1:
-            raise ParseError("malformed ClientHello handshake framing")
+        if len(message) < 4 or message[0] != handshake_type:
+            raise ParseError(f"malformed {handshake_name} handshake framing")
         encoded_length = int.from_bytes(message[1:4], "big")
         if encoded_length != len(message) - 4:
             raise ParseError(
-                f"ClientHello length is {len(message) - 4}, expected {encoded_length}"
+                f"{handshake_name} length is {len(message) - 4}, "
+                f"expected {encoded_length}"
             )
-        return message
-    raise ParseError("no outgoing ClientHello in OpenSSL -msg output")
+        messages.append(message)
+    return messages
+
+
+def outgoing_client_hellos(trace: str) -> list[bytes]:
+    return handshake_messages(trace, ">>>", "ClientHello", 1)
+
+
+def incoming_server_hellos(trace: str) -> list[bytes]:
+    return handshake_messages(trace, "<<<", "ServerHello", 2)
+
+
+def first_outgoing_client_hello(trace: str) -> bytes:
+    messages = outgoing_client_hellos(trace)
+    if not messages:
+        raise ParseError("no outgoing ClientHello in OpenSSL -msg output")
+    return messages[0]
 
 
 def x301_hybrid_keyshare(client_hello: bytes) -> bytes:
