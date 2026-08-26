@@ -22,12 +22,12 @@
 
 #include "provider_internal.h"
 
-#if OPENSSL_VERSION_MAJOR == 3 && OPENSSL_VERSION_MINOR >= 5
+#if OPENSSL_VERSION_MAJOR == 3
 # define X301_SUPPORTED_CORE_MAJOR 3U
 #elif OPENSSL_VERSION_MAJOR == 4
 # define X301_SUPPORTED_CORE_MAJOR 4U
 #else
-# error "The X301 provider requires OpenSSL >= 3.5 or OpenSSL 4 headers"
+# error "The X301 provider requires OpenSSL ABI major 3 or 4 headers"
 #endif
 
 #define X301_BYTES ((size_t)38)
@@ -1154,12 +1154,8 @@ static int x301_core_version_is_supported(
             || !x301_parse_decimal_component(&cursor, &minor)
             || (*cursor != '.' && *cursor != '\0'))
         return 0;
-#if X301_SUPPORTED_CORE_MAJOR == 3U
-    return major == X301_SUPPORTED_CORE_MAJOR && minor >= 5U;
-#else
     (void)minor;
     return major == X301_SUPPORTED_CORE_MAJOR;
-#endif
 }
 
 static int x301_rust_api_is_valid(const X301_RUST_API *rust)

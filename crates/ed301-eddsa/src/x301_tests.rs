@@ -11,7 +11,7 @@ use std::{path::Path, process::Command, string::String, vec::Vec};
 
 use crate::{
     edwards::{BASEPOINT_ENCODING, EdwardsPoint},
-    field_5x64::Fe301,
+    field_5x64::{Fe301, Fe301Lazy},
     parameters::{EDWARDS_A, EDWARDS_D, FIELD_BYTES},
     scalar::Scalar,
     test_support::{decode_hex_array, splitmix64},
@@ -434,18 +434,30 @@ fn d4_rejects_every_affine_main_and_twist_cofactor_coordinate() {
 }
 
 #[test]
-fn fe301_cswap_obeys_both_public_choices() {
-    let five = Fe301::from_u64(5);
-    let seven = Fe301::from_u64(7);
+fn x301_lazy_cswap_obeys_both_public_choices() {
+    let five = Fe301Lazy::from_fe301(Fe301::from_u64(5));
+    let seven = Fe301Lazy::from_fe301(Fe301::from_u64(7));
     let mut left = five;
     let mut right = seven;
-    Fe301::conditional_swap(&mut left, &mut right, Choice::FALSE);
-    assert!(left.ct_eq(&five).to_bool());
-    assert!(right.ct_eq(&seven).to_bool());
+    Fe301Lazy::conditional_swap(&mut left, &mut right, Choice::FALSE);
+    assert_eq!(
+        left.to_canonical_bytes(),
+        Fe301::from_u64(5).to_canonical_bytes()
+    );
+    assert_eq!(
+        right.to_canonical_bytes(),
+        Fe301::from_u64(7).to_canonical_bytes()
+    );
 
-    Fe301::conditional_swap(&mut left, &mut right, Choice::TRUE);
-    assert!(left.ct_eq(&seven).to_bool());
-    assert!(right.ct_eq(&five).to_bool());
+    Fe301Lazy::conditional_swap(&mut left, &mut right, Choice::TRUE);
+    assert_eq!(
+        left.to_canonical_bytes(),
+        Fe301::from_u64(7).to_canonical_bytes()
+    );
+    assert_eq!(
+        right.to_canonical_bytes(),
+        Fe301::from_u64(5).to_canonical_bytes()
+    );
 }
 
 #[test]

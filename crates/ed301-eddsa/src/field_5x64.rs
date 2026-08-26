@@ -28,6 +28,17 @@ const MODULUS: [u64; LIMBS] = [
     0x0000_1fff_ffff_ffff,
 ];
 
+// 2p in little-endian radix 2^64. X301 keeps reduced ladder values below
+// this bound and uses it as the fixed subtraction offset.
+#[cfg(feature = "x301")]
+const MODULUS_TIMES_TWO: [u64; LIMBS] = [
+    0x0000_0000_0000_0766,
+    0xffff_fff0_0000_0000,
+    0xffff_ffff_ffff_ffff,
+    0xffff_ffff_ffff_ffff,
+    0x0000_3fff_ffff_ffff,
+];
+
 // p - 2, used only while constructing immutable affine tables at compile time.
 const INVERSION_EXPONENT: [u64; LIMBS] = [
     0x0000_0000_0000_03b1,
@@ -50,6 +61,19 @@ const SQRT_RATIO_EXPONENT: [u64; LIMBS] = [
 /// Canonical field element in five little-endian limbs.
 #[derive(Clone, Copy)]
 pub(crate) struct Fe301([u64; LIMBS]);
+
+/// Reduced X301 ladder value in `[0, 2p)`.
+#[cfg(feature = "x301")]
+#[derive(Clone, Copy)]
+pub(crate) struct Fe301Lazy([u64; LIMBS]);
+
+/// X301 sum or difference in `[0, 4p)`.
+///
+/// It has no encoding or comparison API and is consumed immediately by a
+/// multiplication or square.
+#[cfg(feature = "x301")]
+#[derive(Clone, Copy)]
+pub(crate) struct Fe301LazyLinear([u64; LIMBS]);
 
 impl Fe301 {
     pub(crate) const ZERO: Self = Self([0; LIMBS]);
@@ -124,47 +148,9 @@ impl Fe301 {
     /// sufficient.
     #[inline(always)]
     pub(crate) fn mul_small(self, value: u32) -> Self {
-        let product = multiply_five_by_u32(self.0, value);
-        let high = (product[4] >> TOP_BITS) | (product[5] << (64 - TOP_BITS));
-        let mut reduced = [
-            product[0],
-            product[1],
-            product[2],
-            product[3],
-            product[4] & TOP_MASK,
-        ];
-
-        // Add high * 2^99.
-        let add_low = high << 35;
-        let add_high = high >> 29;
-        let sum = reduced[1] as u128 + add_low as u128;
-        reduced[1] = sum as u64;
-        let sum = reduced[2] as u128 + add_high as u128 + (sum >> 64);
-        reduced[2] = sum as u64;
-        let mut carry = (sum >> 64) as u64;
-        let mut index = 3;
-        while index < LIMBS {
-            let sum = reduced[index] as u128 + carry as u128;
-            reduced[index] = sum as u64;
-            carry = (sum >> 64) as u64;
-            index += 1;
-        }
-
-        // Subtract high * 947 and add p back if that underflowed.
-        let penalty = high as u128 * FOLD_SUBTRAHEND as u128;
-        let (word, first_borrow) = sub_with_borrow_runtime(reduced[0], penalty as u64, 0);
-        reduced[0] = word;
-        let mut borrow = first_borrow;
-        index = 1;
-        while index < LIMBS {
-            let (word, next_borrow) = sub_with_borrow_runtime(reduced[index], 0, borrow);
-            reduced[index] = word;
-            borrow = next_borrow;
-            index += 1;
-        }
-        let (corrected, _) = add_limbs(reduced, MODULUS);
-        reduced.ct_assign(&corrected, Choice::from_u8_lsb(borrow as u8));
-        Self(conditional_subtract_modulus_ct(reduced))
+        Self(conditional_subtract_modulus_ct(reduce_small_product(
+            multiply_five_by_u32(self.0, value),
+        )))
     }
 
     #[inline(always)]
@@ -326,19 +312,6 @@ impl Fe301 {
         selected.ct_assign(&when_true.0, choice);
         Self(selected)
     }
-
-    /// Swap two field elements with the constant-time selection primitive.
-    ///
-    /// This is the RFC 7748 section 5 `cswap` operation; it deliberately
-    /// reuses the ED301 five-limb representation and selection path.
-    #[cfg(feature = "x301")]
-    #[inline(always)]
-    pub(crate) fn conditional_swap(left: &mut Self, right: &mut Self, choice: Choice) {
-        let original_left = *left;
-        let original_right = *right;
-        *left = Self::conditional_select(original_left, original_right, choice);
-        *right = Self::conditional_select(original_right, original_left, choice);
-    }
 }
 
 impl Default for Fe301 {
@@ -348,7 +321,105 @@ impl Default for Fe301 {
 }
 
 #[cfg(feature = "x301")]
+impl Fe301Lazy {
+    #[cfg(test)]
+    pub(crate) const ZERO: Self = Self([0; LIMBS]);
+    pub(crate) const ONE: Self = Self([1, 0, 0, 0, 0]);
+
+    pub(crate) const fn from_fe301(value: Fe301) -> Self {
+        Self(value.0)
+    }
+
+    /// Form a bounded sum without reducing it.
+    #[inline(always)]
+    pub(crate) fn add_loose(self, rhs: Self) -> Fe301LazyLinear {
+        let (sum, carry) = add_limbs(self.0, rhs.0);
+        debug_assert_eq!(carry, 0);
+        Fe301LazyLinear(sum)
+    }
+
+    /// Form `self + 2p - rhs`, a non-negative representative below `4p`.
+    #[inline(always)]
+    pub(crate) fn sub_loose(self, rhs: Self) -> Fe301LazyLinear {
+        let (augmented, carry) = add_limbs(self.0, MODULUS_TIMES_TWO);
+        debug_assert_eq!(carry, 0);
+        let (difference, borrow) = subtract_limbs_runtime(augmented, rhs.0);
+        debug_assert_eq!(borrow, 0);
+        Fe301LazyLinear(difference)
+    }
+
+    /// Multiply two reduced ladder values, retaining the `[0, 2p)` bound.
+    #[inline(always)]
+    pub(crate) fn mul(self, rhs: Self) -> Self {
+        Self(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
+    }
+
+    /// Multiply by a public 32-bit constant, retaining the `[0, 2p)` bound.
+    #[inline(always)]
+    pub(crate) fn mul_small(self, value: u32) -> Self {
+        Self(reduce_small_product(multiply_five_by_u32(self.0, value)))
+    }
+
+    pub(crate) fn invert(self) -> CtOption<Self> {
+        let canonical = Fe301(conditional_subtract_modulus_ct(self.0));
+        let inverse = canonical.invert();
+        CtOption::new(Self(inverse.to_inner_unchecked().0), inverse.is_some())
+    }
+
+    pub(crate) fn is_zero(&self) -> Choice {
+        Fe301(conditional_subtract_modulus_ct(self.0)).is_zero()
+    }
+
+    pub(crate) fn to_canonical_bytes(self) -> [u8; FIELD_BYTES] {
+        Fe301(conditional_subtract_modulus_ct(self.0)).to_canonical_bytes()
+    }
+
+    #[inline(always)]
+    pub(crate) fn conditional_swap(left: &mut Self, right: &mut Self, choice: Choice) {
+        let original_left = left.0;
+        let original_right = right.0;
+        left.0.ct_assign(&original_right, choice);
+        right.0.ct_assign(&original_left, choice);
+    }
+}
+
+#[cfg(feature = "x301")]
+impl Fe301LazyLinear {
+    /// Multiply two values below `4p`, retaining a result below `2p`.
+    #[inline(always)]
+    pub(crate) fn mul(self, rhs: Self) -> Fe301Lazy {
+        Fe301Lazy(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
+    }
+
+    /// Square a value below `4p`, retaining a result below `2p`.
+    #[inline(always)]
+    pub(crate) fn square(self) -> Fe301Lazy {
+        Fe301Lazy(reduce_wide_unreduced(square_wide(self.0)))
+    }
+
+    /// Multiply by a reduced ladder value.
+    #[cfg(test)]
+    #[inline(always)]
+    pub(crate) fn mul_tight(self, rhs: Fe301Lazy) -> Fe301Lazy {
+        Fe301Lazy(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
+    }
+
+    /// Multiply by a public 32-bit constant.
+    #[inline(always)]
+    pub(crate) fn mul_small(self, value: u32) -> Fe301Lazy {
+        Fe301Lazy(reduce_small_product(multiply_five_by_u32(self.0, value)))
+    }
+}
+
+#[cfg(feature = "x301")]
 impl Zeroize for Fe301 {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+#[cfg(feature = "x301")]
+impl Zeroize for Fe301Lazy {
     fn zeroize(&mut self) {
         self.0.zeroize();
     }
@@ -444,6 +515,7 @@ fn sub_with_borrow_runtime(left: u64, right: u64, borrow: u64) -> (u64, u64) {
     (difference, next_borrow as u64)
 }
 
+#[inline(always)]
 const fn multiply_wide(left: [u64; LIMBS], right: [u64; LIMBS]) -> [u64; LIMBS * 2] {
     let mut output = [0_u64; LIMBS * 2];
     let mut left_index = 0;
@@ -479,6 +551,54 @@ const fn multiply_five_by_u32(value: [u64; LIMBS], multiplier: u32) -> [u64; LIM
     output
 }
 
+/// Reduce a product of a value below `4p` and a public `u32` constant.
+///
+/// Such a product has at most 335 bits. One pseudo-Mersenne fold therefore
+/// leaves a value below `2p`; canonical callers perform their final
+/// subtraction, while the X301 ladder deliberately keeps the wider bound.
+#[inline(always)]
+fn reduce_small_product(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
+    let high = (product[4] >> TOP_BITS) | (product[5] << (64 - TOP_BITS));
+    let mut reduced = [
+        product[0],
+        product[1],
+        product[2],
+        product[3],
+        product[4] & TOP_MASK,
+    ];
+
+    let add_low = high << 35;
+    let add_high = high >> 29;
+    let sum = reduced[1] as u128 + add_low as u128;
+    reduced[1] = sum as u64;
+    let sum = reduced[2] as u128 + add_high as u128 + (sum >> 64);
+    reduced[2] = sum as u64;
+    let mut carry = (sum >> 64) as u64;
+    let mut index = 3;
+    while index < LIMBS {
+        let sum = reduced[index] as u128 + carry as u128;
+        reduced[index] = sum as u64;
+        carry = (sum >> 64) as u64;
+        index += 1;
+    }
+
+    let penalty = high as u128 * FOLD_SUBTRAHEND as u128;
+    let (word, first_borrow) = sub_with_borrow_runtime(reduced[0], penalty as u64, 0);
+    reduced[0] = word;
+    let mut borrow = first_borrow;
+    index = 1;
+    while index < LIMBS {
+        let (word, next_borrow) = sub_with_borrow_runtime(reduced[index], 0, borrow);
+        reduced[index] = word;
+        borrow = next_borrow;
+        index += 1;
+    }
+    let (corrected, _) = add_limbs(reduced, MODULUS);
+    reduced.ct_assign(&corrected, Choice::from_u8_lsb(borrow as u8));
+    reduced
+}
+
+#[inline(always)]
 const fn square_wide(value: [u64; LIMBS]) -> [u64; LIMBS * 2] {
     let mut output = [0_u64; LIMBS * 2];
     let mut accumulator = [0_u64; 3];
@@ -511,11 +631,13 @@ const fn square_wide(value: [u64; LIMBS]) -> [u64; LIMBS * 2] {
     output
 }
 
+#[inline(always)]
 const fn accumulate_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
     let product = left as u128 * right as u128;
     accumulate_192(accumulator, product as u64, (product >> 64) as u64, 0);
 }
 
+#[inline(always)]
 const fn accumulate_double_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
     let product = left as u128 * right as u128;
     let low = product as u64;
@@ -523,6 +645,7 @@ const fn accumulate_double_product(accumulator: &mut [u64; 3], left: u64, right:
     accumulate_192(accumulator, low << 1, (high << 1) | (low >> 63), high >> 63);
 }
 
+#[inline(always)]
 const fn accumulate_192(accumulator: &mut [u64; 3], low: u64, middle: u64, high: u64) {
     let sum = accumulator[0] as u128 + low as u128;
     accumulator[0] = sum as u64;
@@ -533,6 +656,7 @@ const fn accumulate_192(accumulator: &mut [u64; 3], low: u64, middle: u64, high:
         .wrapping_add((sum >> 64) as u64);
 }
 
+#[inline(always)]
 const fn emit_square_column(
     output: &mut [u64; LIMBS * 2],
     column: usize,
@@ -544,6 +668,7 @@ const fn emit_square_column(
     accumulator[2] = 0;
 }
 
+#[inline(always)]
 fn reduce_wide(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
     conditional_subtract_modulus_ct(reduce_wide_unreduced(product))
 }
@@ -558,9 +683,12 @@ const fn reduce_wide_const(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
 /// The subtrahend-free formulation multiplies the high part by the positive
 /// two-limb constant `K = 2^99 - 947` and accumulates it onto the low part,
 /// so every carry chain is an addition with a fixed trip count. For a
-/// reachable wide product below `2^602` the first fold fits seven limbs, the
-/// remaining high part fits two limbs, and the final value stays below `2p`,
-/// so the callers' single conditional subtraction suffices.
+/// canonical product below `2^602`, or an X301 linear product below
+/// `16p^2 < 2^606`, the first fold fits seven limbs and the second high part
+/// fits two limbs. After the second fold the result is below
+/// `2^301 + 2^203`, hence below `2p`. Canonical callers perform one final
+/// subtraction; the X301 ladder retains that bounded representative.
+#[inline(always)]
 const fn reduce_wide_unreduced(product: [u64; LIMBS * 2]) -> [u64; LIMBS] {
     let low = [
         product[0],
@@ -605,6 +733,7 @@ const FOLD_CONSTANT_HIGH: u64 = (1_u64 << 35) - 1;
 /// Every loop bound is a compile-time constant and every carry is propagated
 /// through the full remaining width, so the instruction schedule is
 /// independent of the operand values.
+#[inline(always)]
 const fn accumulate_fold<const HIGH: usize, const OUTPUT: usize>(
     low: &[u64],
     high: &[u64; HIGH],
@@ -797,6 +926,81 @@ mod tests {
                         .to_canonical_bytes()
                 );
             }
+        }
+    }
+
+    #[cfg(feature = "x301")]
+    #[test]
+    fn x301_lazy_arithmetic_matches_the_montgomery_oracle_and_bounds() {
+        fn assert_below_two_p(value: Fe301Lazy) {
+            let (_, borrow) = subtract_limbs(value.0, MODULUS_TIMES_TWO);
+            assert_eq!(borrow, 1, "lazy value escaped the [0, 2p) bound");
+        }
+
+        let mut largest_words = MODULUS;
+        largest_words[0] -= 1;
+        let largest = Fe301::from_canonical_words(largest_words);
+        let largest_oracle = oracle(largest);
+        let lazy_largest = Fe301Lazy::from_fe301(largest);
+        let loose_max = lazy_largest.add_loose(lazy_largest);
+        let squared = loose_max.square();
+        assert_below_two_p(squared);
+        assert_eq!(
+            squared.to_canonical_bytes(),
+            largest_oracle
+                .add(largest_oracle)
+                .square()
+                .to_canonical_bytes()
+        );
+        let product = lazy_largest.sub_loose(Fe301Lazy::ZERO).mul(loose_max);
+        assert_below_two_p(product);
+        assert_eq!(
+            product.to_canonical_bytes(),
+            largest_oracle
+                .mul(largest_oracle.add(largest_oracle))
+                .to_canonical_bytes()
+        );
+
+        let mut state = 0x4c4f_4f53_4532_5031_u64;
+        for _ in 0..10_000 {
+            let left = generated(&mut state);
+            let right = generated(&mut state);
+            let third = generated(&mut state);
+            let fourth = generated(&mut state);
+            let left_lazy = Fe301Lazy::from_fe301(left);
+            let right_lazy = Fe301Lazy::from_fe301(right);
+            let third_lazy = Fe301Lazy::from_fe301(third);
+            let fourth_lazy = Fe301Lazy::from_fe301(fourth);
+            let add = left_lazy.add_loose(right_lazy);
+            let sub = third_lazy.sub_loose(fourth_lazy);
+            let add_oracle = oracle(left).add(oracle(right));
+            let sub_oracle = oracle(third).sub(oracle(fourth));
+
+            let square = add.square();
+            let product = add.mul(sub);
+            let mixed = add.mul_tight(third_lazy);
+            let small = sub.mul_small(2_086_388_028);
+            for value in [square, product, mixed, small] {
+                assert_below_two_p(value);
+            }
+            assert_eq!(
+                square.to_canonical_bytes(),
+                add_oracle.square().to_canonical_bytes()
+            );
+            assert_eq!(
+                product.to_canonical_bytes(),
+                add_oracle.mul(sub_oracle).to_canonical_bytes()
+            );
+            assert_eq!(
+                mixed.to_canonical_bytes(),
+                add_oracle.mul(oracle(third)).to_canonical_bytes()
+            );
+            assert_eq!(
+                small.to_canonical_bytes(),
+                sub_oracle
+                    .mul(Oracle::from_u64(2_086_388_028))
+                    .to_canonical_bytes()
+            );
         }
     }
 

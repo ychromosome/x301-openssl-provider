@@ -11,7 +11,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
     edwards::{EdwardsPoint, X301PreparedComb},
-    field_5x64::Fe301,
+    field_5x64::{Fe301, Fe301Lazy},
     parameters::{FIELD_BITS, FIELD_BYTES},
     scalar::Scalar,
     secret::{Secret, secret},
@@ -52,6 +52,7 @@ pub const BASE_U_BYTES: [u8; X301_BYTES] = [
 
 // `(A - 2) / 4` for the D1 Montgomery form.  This is the RFC 7748 section 5
 // `a24` convention used by `z2 = E * (AA + a24 * E)`.
+#[cfg(test)]
 const A24_MINUS: Fe301 = Fe301::from_canonical_words([
     0x09f4_8544_0646_b74c,
     0x15ed_71ca_8cd4_4f2f,
@@ -59,6 +60,12 @@ const A24_MINUS: Fe301 = Fe301::from_canonical_words([
     0x137b_ab9f_5cdc_1fc8,
     0x0000_0aa0_2936_2ba3,
 ]);
+
+// A24=d/(a-d). Multiplying both projective output coordinates of a doubling
+// by q=(a-d) replaces one dense field multiplication with public small-
+// constant products while leaving X/Z unchanged.
+const A24_DENOMINATOR: u32 = 2_086_388_028;
+const A24_NUMERATOR: u32 = 301;
 
 /// Failure from the strict X301 byte contract.
 ///
@@ -128,9 +135,10 @@ impl SharedSecret {
 /// This is the RFC 7748 section 5 ladder with the D1 X301 parameters. `secret`
 /// is clamped according to D3. `u_bytes` is decoded strictly according to D2;
 /// unlike X25519, the three unused high bits are not masked and values at or
-/// above `p` are rejected.  Every canonical input runs all 301 rounds.  D4
-/// then rejects an all-zero result as required for TLS key exchange by RFC
-/// 9846 section 7.4.2.
+/// above `p` are rejected. Every canonical input executes the same 301-bit
+/// schedule. The three clamped fixed bits retain their required doublings but
+/// omit work whose result is known in advance. D4 then rejects an all-zero
+/// result as required for TLS key exchange by RFC 9846 section 7.4.2.
 pub fn x301(secret_bytes: &[u8], u_bytes: &[u8]) -> Result<SharedSecret, X301Error> {
     let secret_bytes: &[u8; X301_BYTES] = secret_bytes
         .try_into()
@@ -202,7 +210,10 @@ pub fn shared_secret_prepared(
         PreparedPeerInner::MainCurve(table) => {
             let point = secret(EdwardsPoint::scalar_mul_x301_comb(&scalar, table));
             let (x, z) = point.montgomery_projective();
-            finalize(secret(ProjectiveOutput { x, z }))
+            finalize(secret(ProjectiveOutput {
+                x: Fe301Lazy::from_fe301(x),
+                z: Fe301Lazy::from_fe301(z),
+            }))
         }
         PreparedPeerInner::Montgomery(u) => finalize(ladder(&scalar, *u)),
     }
@@ -249,28 +260,18 @@ fn clamp_scalar(input: &[u8; X301_BYTES]) -> Secret<[u8; X301_BYTES]> {
 }
 
 struct LadderState {
-    x1: Fe301,
-    x2: Fe301,
-    z2: Fe301,
-    x3: Fe301,
-    z3: Fe301,
+    x1: Fe301Lazy,
+    x2: Fe301Lazy,
+    z2: Fe301Lazy,
+    x3: Fe301Lazy,
+    z3: Fe301Lazy,
 }
 
 impl LadderState {
-    fn new(u: Fe301) -> Self {
-        Self {
-            x1: u,
-            x2: Fe301::ONE,
-            z2: Fe301::ZERO,
-            x3: u,
-            z3: Fe301::ONE,
-        }
-    }
-
     #[inline(always)]
     fn conditional_swap(&mut self, choice: Choice) {
-        Fe301::conditional_swap(&mut self.x2, &mut self.x3, choice);
-        Fe301::conditional_swap(&mut self.z2, &mut self.z3, choice);
+        Fe301Lazy::conditional_swap(&mut self.x2, &mut self.x3, choice);
+        Fe301Lazy::conditional_swap(&mut self.z2, &mut self.z3, choice);
     }
 }
 
@@ -285,8 +286,8 @@ impl Zeroize for LadderState {
 }
 
 struct ProjectiveOutput {
-    x: Fe301,
-    z: Fe301,
+    x: Fe301Lazy,
+    z: Fe301Lazy,
 }
 
 impl Zeroize for ProjectiveOutput {
@@ -298,35 +299,63 @@ impl Zeroize for ProjectiveOutput {
 
 #[inline(never)]
 fn ladder(scalar: &[u8; X301_BYTES], u: Fe301) -> Secret<ProjectiveOutput> {
-    let mut state = secret(LadderState::new(u));
-    let mut swap = Choice::FALSE;
+    #[inline(always)]
+    fn double_scaled(x: Fe301Lazy, z: Fe301Lazy) -> (Fe301Lazy, Fe301Lazy) {
+        let a = x.add_loose(z);
+        let aa = a.square();
+        let b = x.sub_loose(z);
+        let bb = b.square();
+        let e = aa.sub_loose(bb);
+        let scaled_aa = aa.mul_small(A24_DENOMINATOR);
+        let next_x = scaled_aa.mul(bb);
+        let scaled_e = e.mul_small(A24_NUMERATOR);
+        let next_z = e.mul(scaled_aa.add_loose(scaled_e));
+        (next_x, next_z)
+    }
 
-    for bit_index in (0..FIELD_BITS).rev() {
+    let u = Fe301Lazy::from_fe301(u);
+
+    // D3 fixes bit 300 to one. Its ordinary ladder round leaves (2P, P), so
+    // only the nontrivial doubling half is needed here.
+    let (x2, z2) = double_scaled(u, Fe301Lazy::ONE);
+    let mut state = secret(LadderState {
+        x1: u,
+        x2,
+        z2,
+        x3: u,
+        z3: Fe301Lazy::ONE,
+    });
+    let mut swap = Choice::TRUE;
+
+    for bit_index in (2..FIELD_BITS - 1).rev() {
         let bit = Choice::from_u8_lsb(scalar[bit_index >> 3] >> (bit_index & 7));
         state.conditional_swap(swap.xor(bit));
         swap = bit;
 
-        let a = state.x2.add(state.z2);
+        let a = state.x2.add_loose(state.z2);
         let aa = a.square();
-        let b = state.x2.sub(state.z2);
+        let b = state.x2.sub_loose(state.z2);
         let bb = b.square();
-        let e = aa.sub(bb);
-        let c = state.x3.add(state.z3);
-        let d = state.x3.sub(state.z3);
+        let e = aa.sub_loose(bb);
+        let c = state.x3.add_loose(state.z3);
+        let d = state.x3.sub_loose(state.z3);
         let da = d.mul(a);
         let cb = c.mul(b);
 
-        state.x3 = da.add(cb).square();
-        state.z3 = state.x1.mul(da.sub(cb).square());
-        state.x2 = aa.mul(bb);
-        state.z2 = e.mul(aa.add(A24_MINUS.mul(e)));
+        state.x3 = da.add_loose(cb).square();
+        state.z3 = state.x1.mul(da.sub_loose(cb).square());
+        let scaled_aa = aa.mul_small(A24_DENOMINATOR);
+        state.x2 = scaled_aa.mul(bb);
+        let scaled_e = e.mul_small(A24_NUMERATOR);
+        state.z2 = e.mul(scaled_aa.add_loose(scaled_e));
     }
 
+    // D3 fixes bits 1 and 0 to zero. Select the accumulated result once and
+    // retain only the two required doublings.
     state.conditional_swap(swap);
-    secret(ProjectiveOutput {
-        x: state.x2,
-        z: state.z2,
-    })
+    let (x, z) = double_scaled(state.x2, state.z2);
+    let (x, z) = double_scaled(x, z);
+    secret(ProjectiveOutput { x, z })
 }
 
 fn finalize(projective: Secret<ProjectiveOutput>) -> Result<SharedSecret, X301Error> {
@@ -383,5 +412,20 @@ mod ownership_tests {
         assert!(core::mem::needs_drop::<Secret<LadderState>>());
         assert!(core::mem::needs_drop::<Secret<ProjectiveOutput>>());
         assert!(core::mem::needs_drop::<SharedSecret>());
+    }
+
+    #[test]
+    fn scaled_a24_constants_match_the_frozen_edwards_parameters() {
+        assert_eq!(
+            A24_DENOMINATOR,
+            crate::parameters::EDWARDS_A - u32::from(crate::parameters::EDWARDS_D)
+        );
+        assert_eq!(A24_NUMERATOR, u32::from(crate::parameters::EDWARDS_D));
+        assert!(
+            A24_MINUS
+                .mul_small(A24_DENOMINATOR)
+                .ct_eq(&Fe301::from_u64(u64::from(A24_NUMERATOR)))
+                .to_bool()
+        );
     }
 }

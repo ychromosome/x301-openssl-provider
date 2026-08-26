@@ -1,7 +1,7 @@
 //! Native-shim build contract.
 //!
 //! Sources: Cargo build-script environment/link directives and the OpenSSL
-//! provider header ABI for the selected normative 3.5.7 or 4.0.1 prefix.
+//! provider header ABI for the selected major-3 or major-4 reference prefix.
 
 use std::env;
 use std::fs;

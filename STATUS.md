@@ -1,14 +1,14 @@
 # Status
 
-Date: 2026-08-25
+Date: 2026-08-27
 
 ## Components
 
 | Component | State | Remaining decision |
 |---|---|---|
 | Ed301-EdDSA | Frozen draft-00 contract and experimental provider | Full-scope deep scan and release decision |
-| X301 | Implemented, performance-tuned, pre-freeze | Independent review of the latest remediation and owner freeze |
-| X301MLKEM1024 | Implemented as private-use TLS integration | Re-review after X301 remediation; no standards allocation claimed |
+| X301 | Implementation-frozen experimental candidate | Deep scan and release decision |
+| X301MLKEM1024 | Implementation-frozen private-use integration | Deep scan; no standards allocation claimed |
 
 X301 is additive: it reuses the ED301 field backend but has a distinct key
 domain and does not change Ed301-EdDSA bytes or verification semantics.
@@ -28,28 +28,33 @@ domain and does not change Ed301-EdDSA bytes or verification semantics.
 
 These are local development results, not independent reproduction.
 
+Independent performance and security rereviews were repaired before freeze.
+Codex Security Standard scan `2965ac81-9427-4d71-b4cc-0e1dda702370` reviewed
+the pre-freeze working tree rooted at revision `c4ea771` and confirmed no
+product finding. Its evidence follow-ups are closed separately by the RAND,
+snapshot, artifact-identity and codegen-gate changes in this freeze commit.
+
 ## Current performance baseline
 
-Medians on one Ryzen 9 5950X host, measured separately on both OpenSSL lanes:
+Preliminary medians on one Ryzen 9 5950X host after the lazy ladder and fixed
+clamped-bit schedule, using OpenSSL 3.5.7:
 
-| Operation | OpenSSL 3.5.7 | OpenSSL 4.0.1 |
-|---|---:|---:|
-| X301 key generation | 36.97 us | 36.68 us |
-| Prepared X301 derive | 35.48 us | 35.70 us |
-| X25519 prepared derive control | 23.48 us | 23.89 us |
-| X301/X25519 prepared ratio | 1.511x | 1.496x |
-| One-shot X301 setup plus first derive | 93.28 us | 93.43 us |
-| Hybrid key generation | 73.87 us | 73.19 us |
-| Hybrid encapsulation | 146.04 us | 145.75 us |
-| Hybrid decapsulation | 120.02 us | 119.70 us |
+| Operation | X301 | X25519 control | Ratio |
+|---|---:|---:|---:|
+| Key generation | 36.64 us | 23.59 us | 1.55x |
+| Setup plus first derive | 60.5 us | 24.6 us | 2.46x |
+| Second derive, including table build | 118.09 us | 23.61 us | 5.00x |
+| Prepared steady derive | 33.46 us | 23.61 us | 1.42x |
 
-Key generation uses the existing constant-time fixed-base table. Repeated
-main-curve derive uses a public-peer comb after two untimed warm-up calls;
-first-use and twist inputs retain the ladder. The measured repeated-derive
-ratio meets the owner-set 1.56x ceiling without moving table construction into
-the one-shot measurement. These are local reference values, not portable
-guarantees. A 3% regression classification is valid only for the
-paired, provenance-bound procedure in `docs/PERFORMANCE_MEASUREMENT.md`.
+Key generation and prepared steady derive meet the owner-set 1.56x ceiling.
+Cold derive does not. Its current result is accepted for the implementation
+freeze. It improved from about 93--94 us to about 60.5 us; the
+latest steps reduced the raw first derive from 75.08 to 58.78 us. The second
+call deliberately exposes the one-time 1,920-byte public-peer table build
+instead of hiding it in warm-up.
+These values are local engineering measurements, not portable guarantees.
+Only the provenance-bound procedures in `docs/PERFORMANCE_MEASUREMENT.md`
+may support an acceptance decision.
 
 ## Toolchain boundary
 
@@ -60,7 +65,6 @@ profile, architecture and final binary.
 
 ## Open gates
 
-- Independent re-review of the security and performance remediation.
 - Fresh full-repository deep security scan.
 - AArch64 final-binary codegen and timing evidence.
 - Coverage-guided fuzzing and additional platform lanes.

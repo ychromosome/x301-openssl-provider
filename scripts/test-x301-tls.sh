@@ -35,6 +35,8 @@ LANE_357_EVIDENCE=$2
 LANE_401_ROOT=$3
 LANE_401_EVIDENCE=$4
 
+sh "$ROOT/scripts/require-verified-snapshot.sh"
+
 if test -n "${X301_TLS_RESULT_ROOT:-}"; then
     RESULT_ROOT=$X301_TLS_RESULT_ROOT
     test ! -e "$RESULT_ROOT" && test ! -L "$RESULT_ROOT" || {
@@ -48,6 +50,15 @@ fi
 RESULT_ROOT=$(readlink -f -- "$RESULT_ROOT")
 
 record_run_identity() {
+    mkdir -m 700 -- "$RESULT_ROOT/inputs"
+    cp -- "$LANE_357_ROOT/logs/3.5.7/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256"
+    cp -- "$LANE_401_ROOT/logs/4.0.1/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256"
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256" | awk '{print $1}')" \
+        = "$LANE_357_EVIDENCE"
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256" | awk '{print $1}')" \
+        = "$LANE_401_EVIDENCE"
     (
         cd "$ROOT"
         find Cargo.toml Cargo.lock \
@@ -71,9 +82,11 @@ record_run_identity() {
         /usr/bin/python3 --version
     } >"$RESULT_ROOT/TOOLCHAIN.txt" 2>&1
     {
-        printf 'lane\troot\texternal_evidence_sha256\n'
-        printf '3.5.7\t%s\t%s\n' "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
-        printf '4.0.1\t%s\t%s\n' "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
+        printf 'lane\tevidence_manifest\texternal_evidence_sha256\n'
+        printf '3.5.7\tinputs/openssl-3.5.7-evidence-manifest.sha256\t%s\n' \
+            "$LANE_357_EVIDENCE"
+        printf '4.0.1\tinputs/openssl-4.0.1-evidence-manifest.sha256\t%s\n' \
+            "$LANE_401_EVIDENCE"
     } >"$RESULT_ROOT/RUN_INPUTS.tsv"
 }
 
@@ -440,8 +453,12 @@ run_cross_lane() {
         "$cross/$label-client.log"
     require_text 'Verification: OK' "$cross/$label-client.log"
     finish_server yes
-    /usr/bin/sha256sum "$cross/$label-client.log" "$SERVER_LOG" \
-        >"$cross/SHA256SUMS"
+    (
+        cd "$cross"
+        /usr/bin/sha256sum "$(basename "$cross/$label-client.log")" \
+            "$(basename "$SERVER_LOG")" >SHA256SUMS
+        /usr/bin/sha256sum --strict --quiet -c SHA256SUMS
+    )
     printf 'PASS client=%s server=%s group=X301MLKEM1024\n' \
         "$client_lane" "$server_lane" >"$cross/STATUS.txt"
 }
@@ -509,9 +526,12 @@ run_long_handshake_lane() {
     require_text 'Verification: OK' "$long/valgrind-client.log"
     finish_server yes
 
-    /usr/bin/sha256sum "$modules/x301.so" "$long/RESULTS.tsv" \
-        "$long/first-client.log" "$long/last-client.log" \
-        "$long/valgrind-client.log" >"$long/SHA256SUMS"
+    (
+        cd "$long"
+        /usr/bin/sha256sum RESULTS.tsv first-client.log last-client.log \
+            valgrind-client.log >SHA256SUMS
+        /usr/bin/sha256sum --strict --quiet -c SHA256SUMS
+    )
     printf 'PASS full_hybrid_handshakes=%s valgrind_connections=6\n' \
         "$count" | tee "$long/STATUS.txt"
 }
@@ -561,6 +581,11 @@ run_lane() {
     cp "$target/release/libx301.so" "$modules/x301.so"
     /usr/bin/nm -C "$modules/x301.so" >"$build/x301.nm-C.txt"
     require_text 'ed301_eddsa::x301' "$build/x301.nm-C.txt"
+    (
+        cd "$build"
+        /usr/bin/sha256sum modules/x301.so >PREUSE_SHA256SUMS
+        /usr/bin/sha256sum --strict --quiet -c PREUSE_SHA256SUMS
+    )
 
     env -i PATH=/usr/bin:/bin LC_ALL=C HOME="$build" \
         OPENSSL_CONF=/dev/null LD_LIBRARY_PATH="$prefix/lib" \
@@ -687,34 +712,43 @@ run_lane() {
     run_long_handshake_lane "$openssl" "$prefix" "$modules" "$build" \
         "$cert" "$key" "$LONG_HANDSHAKES"
 
-    /usr/bin/sha256sum \
-        "$modules/x301.so" \
-        "$build/hybrid-initial.msg" \
-        "$build/hybrid-resumed.msg" \
-        "$build/hrr.msg" \
-        "$build/hrr-inspection.txt" \
-        "$build/fragmented.msg" \
-        "$build/fragmented-inspection.txt" \
-        "$build/hybrid-initial-client.log" \
-        "$build/hybrid-resumed-client.log" \
-        "$build/fallback-client.log" \
-        "$build/no-common-client.log" \
-        "$build/r5-client-mlkem/RESULTS.tsv" \
-        "$build/r5-client-mlkem/SHA256SUMS" \
-        "$build/r5-client-x301/RESULTS.tsv" \
-        "$build/r5-client-x301/SHA256SUMS" \
-        "$build/r5-server-mlkem/RESULTS.tsv" \
-        "$build/r5-server-mlkem/SHA256SUMS" \
-        "$build/r6-foreign-size/foreign-size-client.log" \
-        "$build/r6-foreign-size/foreign-size-proxy.log" >"$build/SHA256SUMS"
-    if test "$LONG_HANDSHAKES" -gt 0; then
+    (
+        cd "$build"
+        /usr/bin/sha256sum --strict --quiet -c PREUSE_SHA256SUMS
         /usr/bin/sha256sum \
-            "$build/l2-long-handshakes/STATUS.txt" \
-            "$build/l2-long-handshakes/SHA256SUMS" \
-            "$build/l2-long-handshakes/l2-full-server.log" \
-            "$build/l2-long-handshakes/l2-valgrind-server.log" \
-            >>"$build/SHA256SUMS"
+            modules/x301.so \
+            PREUSE_SHA256SUMS \
+            hybrid-initial.msg \
+            hybrid-resumed.msg \
+            hrr.msg \
+            hrr-inspection.txt \
+            fragmented.msg \
+            fragmented-inspection.txt \
+            hybrid-initial-client.log \
+            hybrid-resumed-client.log \
+            fallback-client.log \
+            no-common-client.log \
+            r5-client-mlkem/RESULTS.tsv \
+            r5-client-mlkem/SHA256SUMS \
+            r5-client-x301/RESULTS.tsv \
+            r5-client-x301/SHA256SUMS \
+            r5-server-mlkem/RESULTS.tsv \
+            r5-server-mlkem/SHA256SUMS \
+            r6-foreign-size/foreign-size-client.log \
+            r6-foreign-size/foreign-size-proxy.log >SHA256SUMS
+    )
+    if test "$LONG_HANDSHAKES" -gt 0; then
+        (
+            cd "$build"
+            /usr/bin/sha256sum \
+                l2-long-handshakes/STATUS.txt \
+                l2-long-handshakes/SHA256SUMS \
+                l2-long-handshakes/l2-full-server.log \
+                l2-long-handshakes/l2-valgrind-server.log \
+                >>SHA256SUMS
+        )
     fi
+    (cd "$build" && /usr/bin/sha256sum --strict --quiet -c SHA256SUMS)
     printf '%s\n' \
         "PASS lane=$lane lane_evidence_sha256=$lane_evidence t8_hybrid=PASS r2_hrr=PASS r3_fragmentation=PASS" \
         'r4_fallback=PASS r4_no_common=PASS r5_client_mlkem=64/64 r5_client_x301=64/64' \
@@ -729,8 +763,10 @@ run_cross_lane 3.5.7 "$LANE_357_ROOT" 4.0.1 "$LANE_401_ROOT" \
     cross-357-client-401-server
 run_cross_lane 4.0.1 "$LANE_401_ROOT" 3.5.7 "$LANE_357_ROOT" \
     cross-401-client-357-server
-sha256sum "$RESULT_ROOT/X301_SOURCE_SHA256SUMS" \
-    "$RESULT_ROOT/TOOLCHAIN.txt" "$RESULT_ROOT/RUN_INPUTS.tsv" \
-    >"$RESULT_ROOT/RUN_IDENTITY_SHA256SUMS"
+(cd "$RESULT_ROOT" && sha256sum \
+    X301_SOURCE_SHA256SUMS TOOLCHAIN.txt RUN_INPUTS.tsv inputs/*.sha256 \
+    >RUN_IDENTITY_SHA256SUMS
+    sha256sum --strict --quiet -c RUN_IDENTITY_SHA256SUMS)
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 printf 'PASS X301 TLS R1-R7 both_lanes=2 cross_lanes=2 result=%s\n' "$RESULT_ROOT" \
     | tee "$RESULT_ROOT/STATUS.txt"

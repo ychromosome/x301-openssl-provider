@@ -81,6 +81,42 @@ static int export_keypair(
         && public_length == KEY_BYTES;
 }
 
+/*
+ * OpenSSL's ECX key-management contract does not permit an encoded-public
+ * update to leave a private key paired with unrelated public material.  X301
+ * chooses the stricter permitted behavior: reject a different public value
+ * and leave the generated keypair unchanged.
+ */
+static int foreign_public_mutation_is_rejected(
+    EVP_PKEY *key,
+    const unsigned char foreign_public[KEY_BYTES],
+    const unsigned char expected_private[KEY_BYTES],
+    const unsigned char expected_public[KEY_BYTES])
+{
+    unsigned char private_after[KEY_BYTES];
+    unsigned char public_after[KEY_BYTES];
+    int result;
+
+    if (CRYPTO_memcmp(
+            foreign_public, expected_public, KEY_BYTES) == 0)
+        return 0;
+    ERR_clear_error();
+    if (EVP_PKEY_set1_encoded_public_key(
+            key, foreign_public, KEY_BYTES) > 0) {
+        ERR_clear_error();
+        return 0;
+    }
+    ERR_clear_error();
+    result = export_keypair(key, private_after, public_after)
+        && CRYPTO_memcmp(
+            private_after, expected_private, KEY_BYTES) == 0
+        && CRYPTO_memcmp(
+            public_after, expected_public, KEY_BYTES) == 0;
+    OPENSSL_cleanse(private_after, sizeof(private_after));
+    OPENSSL_cleanse(public_after, sizeof(public_after));
+    return result;
+}
+
 static int ed301_local_key_rejected_by_x301_keyexch(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY *ed301_key)
@@ -194,6 +230,13 @@ int main(int argc, char **argv)
         goto done;
     }
     pass("H5 separate X301 keygens produce distinct keys");
+
+    if (!foreign_public_mutation_is_rejected(
+            x301_a, x301_b_public, x301_a_private, x301_a_public)) {
+        fail("X301 generated key rejects a foreign public mutation atomically");
+        goto done;
+    }
+    pass("X301 generated key rejects a foreign public mutation atomically");
 
     if (memcmp(ed301_a_private, ed301_b_private, KEY_BYTES) == 0
             || memcmp(ed301_a_public, ed301_b_public, KEY_BYTES) == 0) {

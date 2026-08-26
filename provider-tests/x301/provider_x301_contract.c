@@ -80,6 +80,26 @@ static const unsigned char SHARED_AA[X301_BYTES] = {
 };
 
 /*
+ * The built-in test RAND emits this exact sequence.  TEST_RAND_PUBLIC was
+ * derived independently with reference/x301/x301_reference.py through both
+ * its Montgomery ladder and Edwards-to-Montgomery group path.
+ */
+static const unsigned char TEST_RAND_SEED[X301_BYTES] = {
+    0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+    0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+    0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+    0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf,
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5
+};
+static const unsigned char TEST_RAND_PUBLIC[X301_BYTES] = {
+    0x0a, 0x41, 0xc4, 0x68, 0x1e, 0x65, 0xfb, 0x56,
+    0x43, 0xe8, 0x1b, 0x66, 0xe0, 0x49, 0x15, 0xd1,
+    0x56, 0xfc, 0xd0, 0xd1, 0x7a, 0x10, 0xb9, 0xc0,
+    0x11, 0x67, 0x94, 0xe4, 0x1a, 0xf1, 0xce, 0xb8,
+    0xb2, 0xe4, 0xd9, 0x80, 0xc8, 0x16
+};
+
+/*
  * Independently derived T4 fixture from reference/x301/x301-test-vectors.json.
  * The entries are the complete canonical affine small-order u corpus:
  * 0, 1 and p-1 for p = 2^301 - 2^99 + 947.
@@ -1394,6 +1414,19 @@ int main(int argc, char **argv)
         goto done;
     }
     pass("T6 KEYMGMT match identifies equal and unequal keys");
+
+    calls_before = rand_generate_calls;
+    generated = keygen(libctx);
+    if (generated == NULL
+            || rand_generate_calls != calls_before + 1U
+            || !raw_roundtrip(generated, generated,
+                TEST_RAND_SEED, TEST_RAND_PUBLIC)) {
+        fail("T7 deterministic application RAND fixes seed and public key");
+        goto done;
+    }
+    pass("T7 deterministic application RAND fixes seed and public key");
+    EVP_PKEY_free(generated);
+    generated = NULL;
 
     rand_poisoned = 1;
     calls_before = rand_generate_calls;

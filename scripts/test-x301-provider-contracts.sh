@@ -20,6 +20,8 @@ LANE_357_EVIDENCE=$2
 LANE_401_ROOT=$3
 LANE_401_EVIDENCE=$4
 
+sh "$ROOT/scripts/require-verified-snapshot.sh"
+
 if test -n "${X301_CONTRACT_RESULT_ROOT:-}"; then
     RESULT_ROOT=$X301_CONTRACT_RESULT_ROOT
     test ! -e "$RESULT_ROOT" && test ! -L "$RESULT_ROOT" || {
@@ -33,6 +35,15 @@ fi
 RESULT_ROOT=$(readlink -f -- "$RESULT_ROOT")
 
 record_run_identity() {
+    mkdir -m 700 -- "$RESULT_ROOT/inputs"
+    cp -- "$LANE_357_ROOT/logs/3.5.7/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256"
+    cp -- "$LANE_401_ROOT/logs/4.0.1/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256"
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256" | awk '{print $1}')" \
+        = "$LANE_357_EVIDENCE"
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256" | awk '{print $1}')" \
+        = "$LANE_401_EVIDENCE"
     (
         cd "$ROOT"
         find Cargo.toml Cargo.lock \
@@ -56,9 +67,11 @@ record_run_identity() {
         /usr/bin/python3 --version
     } >"$RESULT_ROOT/TOOLCHAIN.txt" 2>&1
     {
-        printf 'lane\troot\texternal_evidence_sha256\n'
-        printf '3.5.7\t%s\t%s\n' "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
-        printf '4.0.1\t%s\t%s\n' "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
+        printf 'lane\tevidence_manifest\texternal_evidence_sha256\n'
+        printf '3.5.7\tinputs/openssl-3.5.7-evidence-manifest.sha256\t%s\n' \
+            "$LANE_357_EVIDENCE"
+        printf '4.0.1\tinputs/openssl-4.0.1-evidence-manifest.sha256\t%s\n' \
+            "$LANE_401_EVIDENCE"
     } >"$RESULT_ROOT/RUN_INPUTS.tsv"
     {
         printf 'libfuzzer_cargo_fuzz=%s\n' \
@@ -224,6 +237,23 @@ run_lane() {
             -o "$build/bin/${harness}_sanitizer"
     done
 
+    # Seal every executable input before the first provider or harness use.
+    # The same manifest is checked again after all runtime and analyzer lanes.
+    (
+        cd "$build"
+        sha256sum \
+            modules/x301.so \
+            modules-failpoint/x301.so \
+            modules-sanitizer/x301.so \
+            modules/ed301_eddsa_draft00.so \
+            bin/provider_x301_contract \
+            bin/provider_x301_hybrid_contract \
+            bin/provider_x301_contract_sanitizer \
+            bin/provider_x301_hybrid_contract_sanitizer \
+            bin/provider_x301_key_separation >PREUSE_SHA256SUMS
+        sha256sum --strict --quiet -c PREUSE_SHA256SUMS
+    )
+
     env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
         X301_PROVIDER_FAILPOINT_MODE=inert \
         OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
@@ -307,19 +337,31 @@ run_lane() {
         "$source/test/evp_test" -provider default "$data" \
         2>&1 | tee "$build/t10-openssl-evp-test.log"
 
-    sha256sum "$modules/x301.so" \
-        "$failpoint_modules/x301.so" \
-        "$sanitizer_modules/x301.so" \
-        "$modules/ed301_eddsa_draft00.so" \
-        "$build/bin/provider_x301_contract" \
-        "$build/bin/provider_x301_hybrid_contract" \
-        "$build/bin/provider_x301_contract_sanitizer" \
-        "$build/bin/provider_x301_hybrid_contract_sanitizer" \
-        "$build/bin/provider_x301_key_separation" \
-        "$build/provider_x301_contract-valgrind.log" \
-        "$build/provider_x301_hybrid_contract-valgrind.log" \
-        "$data" "$x301_evp_data" "$x301_evp_config" \
-        >"$build/SHA256SUMS"
+    mkdir -m 700 -- "$build/inputs"
+    cp -- "$data" "$build/inputs/openssl-evp-pkey.txt"
+    cp -- "$x301_evp_data" "$build/inputs/openssl-evp-x301.txt"
+    cp -- "$x301_evp_config" "$build/inputs/openssl-evp-x301.cnf"
+    (
+        cd "$build"
+        sha256sum --strict --quiet -c PREUSE_SHA256SUMS
+        sha256sum \
+            modules/x301.so \
+            modules-failpoint/x301.so \
+            modules-sanitizer/x301.so \
+            modules/ed301_eddsa_draft00.so \
+            bin/provider_x301_contract \
+            bin/provider_x301_hybrid_contract \
+            bin/provider_x301_contract_sanitizer \
+            bin/provider_x301_hybrid_contract_sanitizer \
+            bin/provider_x301_key_separation \
+            PREUSE_SHA256SUMS \
+            provider_x301_contract-valgrind.log \
+            provider_x301_hybrid_contract-valgrind.log \
+            inputs/openssl-evp-pkey.txt \
+            inputs/openssl-evp-x301.txt \
+            inputs/openssl-evp-x301.cnf >SHA256SUMS
+        sha256sum --strict --quiet -c SHA256SUMS
+    )
     printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS\n' \
         "$lane" "$lane_evidence" \
         | tee "$build/STATUS.txt"
@@ -328,8 +370,9 @@ run_lane() {
 record_run_identity
 run_lane 3.5.7 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
 run_lane 4.0.1 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
-sha256sum "$RESULT_ROOT/X301_SOURCE_SHA256SUMS" \
-    "$RESULT_ROOT/TOOLCHAIN.txt" "$RESULT_ROOT/RUN_INPUTS.tsv" \
-    "$RESULT_ROOT/FUZZING_STRATEGY.txt" \
-    >"$RESULT_ROOT/RUN_IDENTITY_SHA256SUMS"
+(cd "$RESULT_ROOT" && sha256sum \
+    X301_SOURCE_SHA256SUMS TOOLCHAIN.txt RUN_INPUTS.tsv \
+    FUZZING_STRATEGY.txt inputs/*.sha256 >RUN_IDENTITY_SHA256SUMS
+    sha256sum --strict --quiet -c RUN_IDENTITY_SHA256SUMS)
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 printf 'PASS X301 provider contracts both_lanes=2 result=%s\n' "$RESULT_ROOT"

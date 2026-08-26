@@ -18,12 +18,13 @@ NamedGroup `0xFE2E` is test-only and is not an IANA allocation.
 | Component | Status |
 |---|---|
 | Ed301-EdDSA | Frozen draft-00 byte contract; integration candidate |
-| X301 | Pre-freeze candidate; remediation passes the complete local matrix |
-| X301MLKEM1024 | Private-use candidate; complete local matrix passes |
+| X301 | Implementation-frozen experimental candidate |
+| X301MLKEM1024 | Implementation-frozen private-use candidate |
 
-Independent reviews produced repair work; the latest changes still require
-fresh independent re-review. None of the three components is released or
-approved for production use. See `STATUS.md` for completed and open gates.
+Independent rereviews and a Standard Codex Security scan produced no confirmed
+product vulnerability in the frozen X301 revision. None of the three
+components is released or approved for production use. See `STATUS.md` for
+completed and open gates.
 
 ## Design boundaries
 

@@ -39,6 +39,21 @@ new_case() {
     chmod -R u+w "$CASE"
 }
 
+install_build_sentinel() {
+    manifest=$CASE/crates/ed301-eddsa/Cargo.toml
+    sentinel=$CASE/crates/ed301-eddsa/cargo-was-reached
+    sed 's/^build = false$/build = "build.rs"/' "$manifest" \
+        >"$manifest.new"
+    mv "$manifest.new" "$manifest"
+    printf '%s\n' \
+        'fn main() {' \
+        '    std::fs::write(' \
+        '        concat!(env!("CARGO_MANIFEST_DIR"), "/cargo-was-reached"),' \
+        '        b"cargo reached\\n",' \
+        '    ).unwrap();' \
+        '}' >"$CASE/crates/ed301-eddsa/build.rs"
+}
+
 must_reject() {
     label=$1
     shift
@@ -47,6 +62,34 @@ must_reject() {
         exit 1
     fi
 }
+
+must_reject missing-anchor-verifier env \
+    ED301_SOURCE_MODE=archive \
+    ED301_EXPECTED_SOURCE_MANIFEST_SHA256= \
+    sh "$BASE/scripts/verify-source-tree.sh"
+grep -Fqx \
+    'ED301_EXPECTED_SOURCE_MANIFEST_SHA256 must be an external lowercase SHA-256' \
+    "$TMP/missing-anchor-verifier.log"
+
+new_case missing-anchor-callers
+install_build_sentinel
+SENTINEL=$CASE/crates/ed301-eddsa/cargo-was-reached
+for gate in scripts/check.sh scripts/check-downstream.sh \
+        scripts/check-secret-taint.sh; do
+    label="missing-anchor-$(basename "$gate")"
+    rm -f "$SENTINEL"
+    must_reject "$label" env \
+        ED301_SOURCE_MODE=archive \
+        ED301_VERIFIED_SNAPSHOT=1 \
+        ED301_EXPECTED_SOURCE_MANIFEST_SHA256= \
+        sh "$CASE/$gate"
+    grep -Fqx 'verified snapshot requires an external manifest digest' \
+        "$TMP/$label.log"
+    if [ -e "$SENTINEL" ]; then
+        echo "$gate ran an actual Rust build script without an anchor" >&2
+        exit 1
+    fi
+done
 
 new_case build-script
 printf '%s\n' 'fn main() { panic!("must not execute"); }' \
@@ -123,30 +166,20 @@ must_reject altered-manifest env \
     sh "$CASE/scripts/verify-source-tree.sh"
 
 new_case caller-order
-printf '%s\n' 'fn main() { panic!("must not execute"); }' \
-    >"$CASE/crates/ed301-eddsa/build.rs"
-mkdir -p "$CASE/fakebin" "$CASE/cargo-home"
-cat >"$CASE/fakebin/cargo" <<'EOF'
-#!/bin/sh
-printf 'cargo reached\n' >"$FAKE_CARGO_SENTINEL"
-exit 99
-EOF
-chmod +x "$CASE/fakebin/cargo"
-SENTINEL=$CASE/cargo-was-reached
+install_build_sentinel
+SENTINEL=$CASE/crates/ed301-eddsa/cargo-was-reached
 for gate in scripts/check.sh scripts/check-downstream.sh \
         scripts/check-secret-taint.sh; do
+    rm -f "$SENTINEL"
     must_reject "caller-$(basename "$gate")" env \
-        PATH="$CASE/fakebin:$PATH" \
-        CARGO_HOME="$CASE/cargo-home" \
-        FAKE_CARGO_SENTINEL="$SENTINEL" \
         ED301_SOURCE_MODE=archive \
         ED301_VERIFIED_SNAPSHOT=1 \
         ED301_EXPECTED_SOURCE_MANIFEST_SHA256=$EXPECTED \
         sh "$CASE/$gate"
     if [ -e "$SENTINEL" ]; then
-        echo "$gate reached Cargo before rejecting the source tree" >&2
+        echo "$gate ran an actual Rust build script before rejection" >&2
         exit 1
     fi
 done
 
-printf 'source_tree_gate_regressions=PASS cases=15\n'
+printf 'source_tree_gate_regressions=PASS cases=19\n'

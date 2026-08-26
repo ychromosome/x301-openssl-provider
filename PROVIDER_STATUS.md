@@ -1,27 +1,38 @@
 # Provider status
 
-The repository builds two distinct experimental provider modules:
+The repository builds two distinct experimental provider families:
 
-| Module | Surface |
-|---|---|
-| `ed301_eddsa_draft00.so` | Ed301 `KEYMGMT` and `SIGNATURE` |
-| `x301.so` | X301 `KEYMGMT`/`KEYEXCH` and the private-use X301MLKEM1024 TLS group |
+| Build | Installed module | Surface |
+|---|---|---|
+| Ed301 provider | `ed301_eddsa_draft00.so` | Ed301 `KEYMGMT` and `SIGNATURE` |
+| X301 default features | `x301-raw.so` | X301 `KEYMGMT`/`KEYEXCH` only |
+| X301 with `tls-x301-mlkem1024` | `x301.so` | Raw X301 plus the private-use X301MLKEM1024 TLS group |
+
+Cargo names both X301 build outputs `libx301.so`; packaging and evidence must
+rename the raw-only artifact to `x301-raw.so`. The authoritative integration
+matrix always builds the explicit hybrid feature and records it as `x301.so`.
 
 Ed301 and X301 share field arithmetic but never share keys. The ordinary
 Ed301 module exposes no TLS capability, OID alias, encoder or decoder.
 Optional Ed301 PKI and private-use TLS proof modules remain separately named,
 disabled-by-default test artifacts.
 
-## Supported review lanes
+## ABI and review lanes
 
-The provider matrix targets exactly:
+Runtime compatibility is gated only on the ABI major used to build the module:
+OpenSSL 3 or OpenSSL 4. Minor and patch versions are not rejected. This is a
+compatibility policy, not evidence that every minor release has been tested.
+
+The reproducible provider matrix targets exactly:
 
 - OpenSSL 3.5.7; and
 - OpenSSL 4.0.1.
 
 Each lane is built from a pinned release tarball and accepted only with an
-externally recorded evidence-manifest digest. One module is built per OpenSSL
-ABI major; patch-version string equality is not required.
+externally recorded evidence-manifest digest. One module is built per ABI
+major. X301MLKEM1024 additionally requires `ML-KEM-1024` to be fetchable from
+OpenSSL's default provider; its operations fail closed when that optional
+algorithm is unavailable. Raw X301 has no ML-KEM dependency.
 
 ## X301 contract
 
@@ -31,11 +42,11 @@ ABI major; patch-version string equality is not required.
 - The clamped scalar is reduced modulo `L` and multiplied through the existing
   constant-time Edwards fixed-base table. The result is mapped directly with
   `u=(Z+Y)/(Z-Y)`, using one field inversion.
-- Public-key generation is byte-identical to the retained 301-round
+- Public-key generation is byte-identical to the retained 301-bit
   Montgomery-ladder reference over the frozen boundaries and 10,000
   independent differential cases.
 - Peer inputs require canonical 38-byte u encodings. Derivation uses the fixed
-  301-round ladder and rejects an all-zero shared secret.
+  301-bit ladder schedule and rejects an all-zero shared secret.
 - X301 keys cannot be imported as Ed301 signing keys, or vice versa.
 
 The fixed-base optimization adds no unsafe Rust, assembly, CPU dispatch,
@@ -97,20 +108,22 @@ sealed before first use and rechecked afterward.
 
 ## Performance snapshot
 
-Local medians on the Ryzen 9 5950X development host:
+Preliminary local medians on the Ryzen 9 5950X development host after the lazy
+ladder and fixed clamped-bit schedule:
 
-| OpenSSL | X301 keygen | Prepared derive | Hybrid keygen | Hybrid encaps | Hybrid decaps |
-|---|---:|---:|---:|---:|---:|
-| 3.5.7 | 36.98 us | 90.53 us | 73.87 us | 146.04 us | 120.02 us |
-| 4.0.1 | 36.60 us | 90.89 us | 73.19 us | 145.75 us | 119.70 us |
+| OpenSSL | X301 keygen | Cold setup + first | Prepared steady | X25519 cold |
+|---|---:|---:|---:|---:|
+| 3.5.7 | 36.64 us | 61.55 us | 33.46 us | 24.79 us |
 
-The old ladder key-generation path measured about 97.4 us. Prepared derive
-remains the canonical ladder and was not changed. Measurements are local
-regression evidence, not portable guarantees or security evidence.
+The old ladder key-generation path measured about 97.4 us. The cold derive
+target of at most 1.56x X25519 is not met: the current ratio is about 2.48x.
+Prepared steady derive is about 1.42x X25519. Measurements are local
+engineering evidence, not portable guarantees or security evidence.
 
 ## Remaining gates
 
-Independent X301 security/performance reviews, the full-repository deep scan,
-AArch64 codegen/timing, coverage-guided fuzzing, identifier standardization and
-production/release review remain open. No production, FIPS, standards,
-universal constant-time or complete-zeroization claim is made.
+The full-repository deep scan, AArch64 codegen/timing, coverage-guided fuzzing,
+identifier standardization and production/release review remain open. The
+current cold-derive result is accepted for this implementation freeze. No
+production, FIPS, standards, universal constant-time or complete-zeroization
+claim is made.

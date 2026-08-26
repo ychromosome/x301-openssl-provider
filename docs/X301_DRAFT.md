@@ -19,7 +19,7 @@ an ML-KEM implementation, a combiner KDF, or a standalone hybrid protocol.
 | Hybrid TLS construction | [RFC 9954](https://www.rfc-editor.org/rfc/rfc9954.html) | Concatenated component shares and secrets; failure as one group |
 | Registered X25519/ML-KEM instance | [RFC 10024 Sections 4-5](https://www.rfc-editor.org/rfc/rfc10024.html) | ML-KEM-first ordering and role-dependent share layout |
 | ML-KEM-1024 | [FIPS 203](https://doi.org/10.6028/NIST.FIPS.203) | Algorithms, sizes and implicit rejection; implementation is OpenSSL-owned |
-| Provider TLS group and KEM surface | OpenSSL `provider-base(7)`, `provider-keymgmt(7)`, `provider-kem(7)`, `EVP_PKEY_encapsulate(3)` and `EVP_PKEY_decapsulate(3)` in exactly 3.5.7 and 4.0.1 | The technically EVP-fetchable adapter that libssl requires |
+| Provider TLS group and KEM surface | OpenSSL `provider-base(7)`, `provider-keymgmt(7)`, `provider-kem(7)`, `EVP_PKEY_encapsulate(3)` and `EVP_PKEY_decapsulate(3)`; exact evidence lanes 3.5.7 and 4.0.1 | The technically EVP-fetchable adapter that libssl requires |
 | ED301 parameters and EdDSA byte contract | `../inputs/round4/ED301-EdDSA-draft.md` and `../inputs/round4/upstream/ed301-v1/ed301-v1.json` | Frozen curve input only; the Ed301-EdDSA contract is unchanged |
 
 RFC 9846 obsoletes RFC 8446 and is the controlling base TLS 1.3 source. Its
@@ -45,6 +45,13 @@ The provider profile has exactly two additions:
 ML-KEM-1024 MUST be fetched through EVP from the OpenSSL default provider in
 the normative 3.5.7 and 4.0.1 lanes. The project MUST NOT implement, vendor,
 partially reproduce, or expose project-owned ML-KEM arithmetic.
+
+Provider modules accept the OpenSSL ABI major against which they were built
+(3 or 4); they do not impose a minor- or patch-version runtime check. The
+exact lanes above are reproducibility baselines, not an equality requirement.
+Hybrid operations additionally require `ML-KEM-1024` to be available from the
+default provider and fail without partial output if it is unavailable. Raw
+X301 does not have that feature dependency.
 
 OpenSSL requires a `TLS-GROUP` with `is-kem=1` to name provider KEYMGMT and KEM
 operations that libssl fetches through EVP. Consequently, the hybrid adapter
@@ -203,10 +210,21 @@ the result.
 ### 5.3 Scalar multiplication and output
 
 The canonical and fallback implementation is the RFC 7748 Section 5
-Montgomery ladder for exactly bits 300 down through 0 with
-`A24=(A-2)/4`. It reuses the existing Ed301 5x64 `mul`, `square`, reduction
-and constant-time selection domain. Twist and exceptional Montgomery inputs
-always use this path.
+Montgomery ladder for bits 300 down through 0 with `A24=(A-2)/4`. D3 fixes bit
+300 to one and bits 1 and 0 to zero. The implementation therefore folds the
+top bit into initialization, runs 298 full rounds for bits 299 through 2, and
+finishes with two fixed doublings. It still performs exactly 301 doublings;
+only three differential additions with known results are omitted.
+
+The ladder uses the existing Ed301 five-limb multiplication, squaring,
+reduction and constant-time selection. Private bounded types distinguish
+reduced values below `2p` from immediate sums and differences below `4p`;
+they add no limb representation or reducer. Canonicalization occurs at the
+inversion and encoding boundary. For doubling, multiplying both projective
+outputs by `q=a-d=2086388028` permits `A24=d/(a-d)=301/q` to use the two public
+32-bit factors `q` and `301` instead of a dense field constant. The ratio
+`X/Z` is unchanged. The product `q*AA` is computed once and reused in both
+doubling outputs. Twist and exceptional Montgomery inputs always use this path.
 
 For repeated derivation with the same public main-curve peer, the provider may
 use the registered `X-PREP` fixed-base comb. Preparation maps the public peer
@@ -214,9 +232,8 @@ to Edwards form, multiplies it by the cofactor, and creates a public table. The
 secret schedule uses 305 regular signed digits in 61 fixed rounds; every round
 scans all 16 entries. Internally, `X` and `T` are scaled by `45677` to the
 isomorphic `a=1`, `d'=d/a` model. `Y` and `Z`, hence the output
-`u=(Z+Y)/(Z-Y)`, are unchanged. This is not a second field representation:
-all values use the same `Fe301` type, reduction, inversion and conditional
-selection.
+`u=(Z+Y)/(Z-Y)`, are unchanged. The comb continues to use `Fe301`; the ladder
+uses only bounded wrappers around the same limbs and arithmetic backend.
 
 The provider's first derive after peer setup remains on the ladder. A second
 call may build the public table; subsequent calls use the comb. Peer
@@ -431,7 +448,7 @@ a standards-conformance claim:
 | T9 | ML-KEM mutation, all-zero X301 and boundary mutations | PASS on both exact lanes; wire mutation fails protected-record authentication without an explicit KEM error |
 | T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | PASS: 35 ML-KEM-1024 cases/105 checks on 3.5.7 and 36 cases/108 checks on 4.0.1 |
 | T11 | cover public derivation, signing, X301 key generation, ladder derive and prepared derive, each in defined and tainted mode | PASS: all ten cases on the final read-only archive snapshot; its externally anchored source-manifest digest is recorded with the run |
-| T12 | ladder/cswap/field, fixed-base key-generation and prepared-comb disassembly gate | PASS on both final provider modules: one fixed 301-round ladder edge and a 61-row, 16-entry full-scan prepared comb; dynamic taint supplies the complementary secret-address check |
+| T12 | ladder/cswap/field, fixed-base key-generation and prepared-comb disassembly gate | PASS on both final provider modules: one fixed 298-round variable ladder edge, three fixed doublings and a 61-row, 16-entry full-scan prepared comb; dynamic taint supplies the complementary secret-address check |
 | T13 | scalar, ladder/comb state and shared-secret zeroization | PASS for the named-owner boundary; direct and hybrid EVP lifecycle lanes are Valgrind-clean on both OpenSSL versions |
 
 ### 10.1 Extended adversarial assurance

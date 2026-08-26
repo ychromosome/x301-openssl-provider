@@ -274,6 +274,14 @@ unsafe extern "C" fn key_set_encoded_public(
         if validate_public_encoding(&public).is_err() {
             return 0;
         }
+        if let Some(private) = key.private.as_ref() {
+            let Ok(derived) = public_from_secret(&private.0) else {
+                return 0;
+            };
+            if !bytes_equal(&derived, &public) {
+                return 0;
+            }
+        }
         if let Some(existing) = key.public.as_ref()
             && !bytes_equal(existing, &public)
         {
@@ -633,4 +641,81 @@ unsafe fn write_exact<const N: usize>(output: *mut u8, output_len: usize, value:
     // SAFETY: The caller guarantees `output_len` writable bytes.
     unsafe { core::ptr::copy_nonoverlapping(value.as_ptr(), output, N) };
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct OwnedKey(*mut c_void);
+
+    impl Drop for OwnedKey {
+        fn drop(&mut self) {
+            // SAFETY: The test owns the one live pointer returned by this
+            // module and releases it exactly once.
+            unsafe { key_free(self.0) };
+        }
+    }
+
+    #[test]
+    fn private_only_duplicate_rejects_foreign_public_atomically() {
+        let private_a = [0x31_u8; SECRET_BYTES];
+        let private_b = [0xa7_u8; SECRET_BYTES];
+        let public_a = public_from_secret(&private_a).expect("A public key");
+        let public_b = public_from_secret(&private_b).expect("B public key");
+        assert_ne!(public_a, public_b);
+
+        let source = OwnedKey(key_new());
+        assert!(!source.0.is_null());
+        // SAFETY: All buffers and the module-owned key remain live for each
+        // complete call.
+        assert_eq!(unsafe {
+            key_import(
+                source.0,
+                private_a.as_ptr(),
+                private_a.len(),
+                core::ptr::null(),
+                0,
+            )
+        }, 1);
+        // SAFETY: `source` remains live and the returned object is owned by
+        // this test.
+        let duplicate = OwnedKey(unsafe { key_duplicate(source.0, 1, 0) });
+        assert!(!duplicate.0.is_null());
+        // SAFETY: `duplicate` remains live for all queries below.
+        assert_eq!(unsafe { key_has(duplicate.0, 1, 0) }, 1);
+        assert_eq!(unsafe { key_has(duplicate.0, 0, 1) }, 0);
+
+        let mut private_after = [0_u8; SECRET_BYTES];
+        // SAFETY: The output is exactly the documented private-key size.
+        assert_eq!(unsafe {
+            key_get_private(
+                duplicate.0,
+                private_after.as_mut_ptr(),
+                private_after.len(),
+            )
+        }, 1);
+        assert_eq!(private_after, private_a);
+
+        // SAFETY: The public buffers are exact and remain readable.
+        assert_eq!(unsafe {
+            key_set_encoded_public(duplicate.0, public_b.as_ptr(), public_b.len())
+        }, 0);
+        assert_eq!(unsafe { key_has(duplicate.0, 0, 1) }, 0);
+        private_after.fill(0);
+        assert_eq!(unsafe {
+            key_get_private(
+                duplicate.0,
+                private_after.as_mut_ptr(),
+                private_after.len(),
+            )
+        }, 1);
+        assert_eq!(private_after, private_a);
+
+        assert_eq!(unsafe {
+            key_set_encoded_public(duplicate.0, public_a.as_ptr(), public_a.len())
+        }, 1);
+        assert_eq!(unsafe { key_validate(duplicate.0, 1, 1) }, 1);
+        private_after.zeroize();
+    }
 }

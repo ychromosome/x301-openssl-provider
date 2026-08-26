@@ -62,8 +62,8 @@ preliminary control-flow and memory check for one local build, not a proof of
 constant-time execution, complete zeroization or fault resistance.
 
 With the `x301` feature, the same harness also marks the X301 private scalar
-undefined and separately exercises the complete 301-round ladder and prepared
-comb derive paths. The final-module gate inspects the ladder, comb recoder,
+undefined and separately exercises the complete 301-bit ladder schedule and
+prepared comb derive paths. The final-module gate inspects the ladder, comb recoder,
 full-scan selector and shared 5x64 field symbols. These observations are
 compiler- and binary-specific and do not strengthen the general limitation
 above.

@@ -76,6 +76,25 @@ static int operation_is(const char *operation, const char *name)
     return strcmp(operation, name) == 0;
 }
 
+static size_t derive_warmups(const char *operation)
+{
+    if (operation_is(operation, "derive-first"))
+        return 0;
+    if (operation_is(operation, "derive-second"))
+        return 1;
+    if (operation_is(operation, "derive-steady"))
+        return 2;
+    return SIZE_MAX;
+}
+
+static int lifecycle_plan_self_test(void)
+{
+    return derive_warmups("derive-setup") == SIZE_MAX
+        && derive_warmups("derive-first") == 0
+        && derive_warmups("derive-second") == 1
+        && derive_warmups("derive-steady") == 2;
+}
+
 int main(int argc, char **argv)
 {
     const char *operation;
@@ -91,6 +110,7 @@ int main(int argc, char **argv)
     size_t shared_length = 0;
     uint64_t started;
     uint64_t finished;
+    uint64_t total_ns = 0;
     unsigned char private_a[MAX_KEY_BYTES];
     unsigned char private_b[MAX_KEY_BYTES];
     unsigned char public_b[MAX_KEY_BYTES];
@@ -110,9 +130,15 @@ int main(int argc, char **argv)
     EVP_PKEY *generated = NULL;
     int status = EXIT_FAILURE;
 
+    if (argc == 2 && strcmp(argv[1], "--self-test") == 0) {
+        if (!lifecycle_plan_self_test())
+            return EXIT_FAILURE;
+        puts("x301_bench_lifecycle_plan=PASS");
+        return EXIT_SUCCESS;
+    }
     if (argc != 7 || !parse_size(argv[5], MAX_KEY_BYTES, &key_bytes)
             || !parse_size(argv[6], 100000000U, &count) || count == 0) {
-        fprintf(stderr, "usage: %s <keygen|derive|derive-prepare|derive-total|kem-keygen|encaps|decaps> "
+        fprintf(stderr, "usage: %s <keygen|derive-setup|derive-first|derive-second|derive-steady|kem-keygen|encaps|decaps> "
             "<algorithm> <properties|-> <module-dir|-> <key-bytes> <count>\n",
             argv[0]);
         return EXIT_FAILURE;
@@ -122,16 +148,18 @@ int main(int argc, char **argv)
     properties = strcmp(argv[3], "-") == 0 ? NULL : argv[3];
     module_directory = argv[4];
     if (!operation_is(operation, "keygen")
-            && !operation_is(operation, "derive")
-            && !operation_is(operation, "derive-prepare")
-            && !operation_is(operation, "derive-total")
+            && !operation_is(operation, "derive-setup")
+            && !operation_is(operation, "derive-first")
+            && !operation_is(operation, "derive-second")
+            && !operation_is(operation, "derive-steady")
             && !operation_is(operation, "kem-keygen")
             && !operation_is(operation, "encaps")
             && !operation_is(operation, "decaps"))
         goto done;
-    if ((operation_is(operation, "derive")
-            || operation_is(operation, "derive-prepare")
-            || operation_is(operation, "derive-total")) && key_bytes == 0)
+    if ((operation_is(operation, "derive-setup")
+            || operation_is(operation, "derive-first")
+            || operation_is(operation, "derive-second")
+            || operation_is(operation, "derive-steady")) && key_bytes == 0)
         goto done;
 
     libctx = OSSL_LIB_CTX_new();
@@ -155,9 +183,10 @@ int main(int argc, char **argv)
             goto done;
         EVP_PKEY_free(key);
         key = NULL;
-    } else if (operation_is(operation, "derive")
-            || operation_is(operation, "derive-prepare")
-            || operation_is(operation, "derive-total")) {
+    } else if (operation_is(operation, "derive-setup")
+            || operation_is(operation, "derive-first")
+            || operation_is(operation, "derive-second")
+            || operation_is(operation, "derive-steady")) {
         for (index = 0; index < key_bytes; index++) {
             private_a[index] = (unsigned char)index;
             private_b[index] = (unsigned char)(key_bytes - 1U - index);
@@ -173,31 +202,6 @@ int main(int argc, char **argv)
                     generated, public_b, &public_length) <= 0
                 || public_length != key_bytes)
             goto done;
-        peer = raw_key(libctx, algorithm, properties, EVP_PKEY_PUBLIC_KEY,
-            OSSL_PKEY_PARAM_PUB_KEY, public_b, public_length);
-        if (peer == NULL)
-            goto done;
-        if (operation_is(operation, "derive")) {
-            derive = EVP_PKEY_CTX_new_from_pkey(libctx, key, properties);
-            output_length = sizeof(output);
-            if (derive == NULL || EVP_PKEY_derive_init(derive) <= 0
-                    || EVP_PKEY_derive_set_peer(derive, peer) <= 0
-                    || EVP_PKEY_derive(derive, NULL, &output_length) <= 0
-                    || output_length != key_bytes)
-                goto done;
-            /* Two untimed derives establish the explicitly prepared steady
-             * state for providers that amortize public-peer precomputation. */
-            for (index = 0; index < 2; index++) {
-                output_length = key_bytes;
-                if (EVP_PKEY_derive(derive, output, &output_length) <= 0
-                        || output_length != key_bytes)
-                    goto done;
-                sink ^= output[0];
-            }
-        } else {
-            EVP_PKEY_free(peer);
-            peer = NULL;
-        }
     } else {
         context = EVP_PKEY_CTX_new_from_name(libctx, algorithm, properties);
         if (context == NULL || EVP_PKEY_keygen_init(context) <= 0
@@ -227,25 +231,19 @@ int main(int argc, char **argv)
     EVP_PKEY_free(generated);
     generated = NULL;
     CALLGRIND_ZERO_STATS;
-    CALLGRIND_START_INSTRUMENTATION;
-    if (!monotonic_ns(&started))
-        goto done;
-    for (index = 0; index < count; index++) {
-        if (operation_is(operation, "keygen")) {
-            generated = EVP_PKEY_Q_keygen(libctx, properties, algorithm);
-            if (generated == NULL)
-                goto done;
-            sink ^= (unsigned char)(uintptr_t)generated;
-            EVP_PKEY_free(generated);
-            generated = NULL;
-        } else if (operation_is(operation, "derive")) {
-            output_length = key_bytes;
-            if (EVP_PKEY_derive(derive, output, &output_length) <= 0
-                    || output_length != key_bytes)
-                goto done;
-            sink ^= output[0];
-        } else if (operation_is(operation, "derive-prepare")
-                || operation_is(operation, "derive-total")) {
+    if (operation_is(operation, "derive-setup")
+            || operation_is(operation, "derive-first")
+            || operation_is(operation, "derive-second")
+        || operation_is(operation, "derive-steady")) {
+        for (index = 0; index < count; index++) {
+            size_t warmups = derive_warmups(operation);
+            size_t warmup;
+
+            if (operation_is(operation, "derive-setup")) {
+                CALLGRIND_START_INSTRUMENTATION;
+                if (!monotonic_ns(&started))
+                    goto done;
+            }
             peer = raw_key(libctx, algorithm, properties,
                 EVP_PKEY_PUBLIC_KEY, OSSL_PKEY_PARAM_PUB_KEY,
                 public_b, public_length);
@@ -254,49 +252,82 @@ int main(int argc, char **argv)
                     || EVP_PKEY_derive_init(derive) <= 0
                     || EVP_PKEY_derive_set_peer(derive, peer) <= 0)
                 goto done;
-            if (operation_is(operation, "derive-total")) {
+            if (operation_is(operation, "derive-setup")) {
+                if (!monotonic_ns(&finished) || finished < started)
+                    goto done;
+                CALLGRIND_STOP_INSTRUMENTATION;
+                total_ns += finished - started;
+                sink ^= (unsigned char)(uintptr_t)derive;
+            } else {
+                for (warmup = 0; warmup < warmups; warmup++) {
+                    output_length = key_bytes;
+                    if (EVP_PKEY_derive(derive, output, &output_length) <= 0
+                            || output_length != key_bytes)
+                        goto done;
+                    sink ^= output[0];
+                }
+                CALLGRIND_START_INSTRUMENTATION;
+                if (!monotonic_ns(&started))
+                    goto done;
                 output_length = key_bytes;
                 if (EVP_PKEY_derive(derive, output, &output_length) <= 0
                         || output_length != key_bytes)
                     goto done;
+                if (!monotonic_ns(&finished) || finished < started)
+                    goto done;
+                CALLGRIND_STOP_INSTRUMENTATION;
+                total_ns += finished - started;
                 sink ^= output[0];
-            } else {
-                sink ^= (unsigned char)(uintptr_t)derive;
             }
             EVP_PKEY_CTX_free(derive);
             derive = NULL;
             EVP_PKEY_free(peer);
             peer = NULL;
-        } else if (operation_is(operation, "kem-keygen")) {
-            if (EVP_PKEY_generate(context, &generated) <= 0)
-                goto done;
-            sink ^= (unsigned char)(uintptr_t)generated;
-            EVP_PKEY_free(generated);
-            generated = NULL;
-        } else if (operation_is(operation, "encaps")) {
-            size_t current_ciphertext = ciphertext_length;
-            size_t current_shared = shared_length;
-            if (EVP_PKEY_encapsulate(encaps, ciphertext,
-                    &current_ciphertext, shared, &current_shared) <= 0
-                    || current_ciphertext != ciphertext_length
-                    || current_shared != shared_length)
-                goto done;
-            sink ^= ciphertext[0] ^ shared[0];
-        } else {
-            output_length = shared_length;
-            if (EVP_PKEY_decapsulate(decaps, received, &output_length,
-                    ciphertext, ciphertext_length) <= 0
-                    || output_length != shared_length)
-                goto done;
-            sink ^= received[0];
         }
+    } else {
+        CALLGRIND_START_INSTRUMENTATION;
+        if (!monotonic_ns(&started))
+            goto done;
+        for (index = 0; index < count; index++) {
+            if (operation_is(operation, "keygen")) {
+                generated = EVP_PKEY_Q_keygen(libctx, properties, algorithm);
+                if (generated == NULL)
+                    goto done;
+                sink ^= (unsigned char)(uintptr_t)generated;
+                EVP_PKEY_free(generated);
+                generated = NULL;
+            } else if (operation_is(operation, "kem-keygen")) {
+                if (EVP_PKEY_generate(context, &generated) <= 0)
+                    goto done;
+                sink ^= (unsigned char)(uintptr_t)generated;
+                EVP_PKEY_free(generated);
+                generated = NULL;
+            } else if (operation_is(operation, "encaps")) {
+                size_t current_ciphertext = ciphertext_length;
+                size_t current_shared = shared_length;
+                if (EVP_PKEY_encapsulate(encaps, ciphertext,
+                        &current_ciphertext, shared, &current_shared) <= 0
+                        || current_ciphertext != ciphertext_length
+                        || current_shared != shared_length)
+                    goto done;
+                sink ^= ciphertext[0] ^ shared[0];
+            } else {
+                output_length = shared_length;
+                if (EVP_PKEY_decapsulate(decaps, received, &output_length,
+                        ciphertext, ciphertext_length) <= 0
+                        || output_length != shared_length)
+                    goto done;
+                sink ^= received[0];
+            }
+        }
+        if (!monotonic_ns(&finished) || finished < started)
+            goto done;
+        CALLGRIND_STOP_INSTRUMENTATION;
+        total_ns = finished - started;
     }
-    if (!monotonic_ns(&finished) || finished < started)
-        goto done;
-    CALLGRIND_STOP_INSTRUMENTATION;
     printf("RESULT operation=%s algorithm=%s count=%zu total_ns=%" PRIu64
            " mean_ns=%.1f\n", operation, algorithm, count,
-        finished - started, (double)(finished - started) / (double)count);
+        total_ns, (double)total_ns / (double)count);
     status = EXIT_SUCCESS;
 
 done:

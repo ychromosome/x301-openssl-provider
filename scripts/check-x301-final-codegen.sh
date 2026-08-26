@@ -18,8 +18,9 @@ fi
 MODULE=$1
 EVIDENCE=$2
 
-for tool in /usr/bin/awk /usr/bin/gawk /usr/bin/grep /usr/bin/mkdir \
-        /usr/bin/nm /usr/bin/objdump /usr/bin/readelf /usr/bin/sha256sum; do
+for tool in /usr/bin/awk /usr/bin/cp /usr/bin/find /usr/bin/gawk \
+        /usr/bin/grep /usr/bin/mkdir /usr/bin/nm /usr/bin/objdump \
+        /usr/bin/readelf /usr/bin/sha256sum /usr/bin/sort /usr/bin/xargs; do
     test -x "$tool" || {
         echo "missing codegen tool: $tool" >&2
         exit 127
@@ -34,6 +35,11 @@ test ! -e "$EVIDENCE" || {
     exit 2
 }
 /usr/bin/mkdir -m 700 "$EVIDENCE"
+SOURCE_MODULE_SHA256=$(/usr/bin/sha256sum "$MODULE" | /usr/bin/awk '{ print $1 }')
+/usr/bin/cp -- "$MODULE" "$EVIDENCE/provider-module.so"
+MODULE=$EVIDENCE/provider-module.so
+test "$SOURCE_MODULE_SHA256" = \
+    "$(/usr/bin/sha256sum "$MODULE" | /usr/bin/awk '{ print $1 }')"
 
 /usr/bin/readelf -h "$MODULE" >"$EVIDENCE/elf-header.txt"
 /usr/bin/grep -Eq 'Type:[[:space:]]+DYN \(Shared object file\)$' \
@@ -55,31 +61,91 @@ AFFINE_SELECT=$EVIDENCE/x301-affine-select.asm
 COMB=$EVIDENCE/x301-prepared-comb.asm
 COMB_DIGITS=$EVIDENCE/x301-prepared-comb-digits.asm
 SUMMARY=$EVIDENCE/summary.txt
+PUBLIC_CALLS=$EVIDENCE/x301-public-from-secret-calls.txt
 /usr/bin/objdump -d -C --no-show-raw-insn --disassemble-zeroes --wide \
     "$MODULE" >"$DUMP"
 /usr/bin/nm -C --defined-only "$MODULE" >"$EVIDENCE/provider.nm"
 : >"$SUMMARY"
 
+count_symbol() {
+    input=$1
+    symbol=$2
+    /usr/bin/awk -v symbol="$symbol" '
+        function canonical(name) {
+            if (substr(name, 1, 1) == "<") {
+                sub(/^</, "", name)
+                sub(/>::/, "::", name)
+            }
+            return name
+        }
+        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
+            name = $0
+            sub(/^[^<]*</, "", name)
+            sub(/>:[[:space:]]*$/, "", name)
+            if (canonical(name) == symbol)
+                count++
+        }
+        END { print count + 0 }
+    ' "$input"
+}
+
 extract_symbol() {
     symbol=$1
     output=$2
-    count=$(/usr/bin/awk -v symbol="$symbol" '
-        /^[[:space:]]*[[:xdigit:]]+ <.*>:/ &&
-                index($0, "<" symbol ">:") != 0 { count++ }
-        END { print count + 0 }
-    ' "$DUMP")
+    count=$(count_symbol "$DUMP" "$symbol")
     test "$count" -eq 1 || {
         printf 'expected one symbol %s, found %s\n' "$symbol" "$count" >&2
         exit 1
     }
     /usr/bin/awk -v symbol="$symbol" '
+        function canonical(name) {
+            if (substr(name, 1, 1) == "<") {
+                sub(/^</, "", name)
+                sub(/>::/, "::", name)
+            }
+            return name
+        }
         /^[[:space:]]*[[:xdigit:]]+ <.*>:/ {
-            active = index($0, "<" symbol ">:") != 0
+            name = $0
+            sub(/^[^<]*</, "", name)
+            sub(/>:[[:space:]]*$/, "", name)
+            active = canonical(name) == symbol
         }
         active { print }
     ' "$DUMP" >"$output"
     test -s "$output"
 }
+
+extract_call_targets() {
+    input=$1
+    output=$2
+    /usr/bin/awk '
+        function canonical(name) {
+            if (substr(name, 1, 1) == "<") {
+                sub(/^</, "", name)
+                sub(/>::/, "::", name)
+            }
+            return name
+        }
+        /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^call/ && $0 ~ /<.*>$/ {
+            name = $0
+            sub(/^[^<]*</, "", name)
+            sub(/>[[:space:]]*$/, "", name)
+            print canonical(name)
+        }
+    ' "$input" >"$output"
+}
+
+# rustc 1.91 emits legacy demangled method names while current rustc emits
+# v0 names with an angle-bracketed inherent-impl type.  Both must resolve to
+# the same exact canonical symbol; partial and suffix matches remain rejected.
+MANGLE_FIXTURE=$EVIDENCE/symbol-mangling-fixture.txt
+printf '%s\n' \
+    '0000000000000000 <ed301_eddsa::edwards::EdwardsPoint::double>:' \
+    '0000000000000001 <<ed301_eddsa::edwards::EdwardsPoint>::double>:' \
+    >"$MANGLE_FIXTURE"
+test "$(count_symbol "$MANGLE_FIXTURE" \
+    'ed301_eddsa::edwards::EdwardsPoint::double')" -eq 2
 
 forbidden_straight_line() {
     /usr/bin/awk '
@@ -116,9 +182,9 @@ fi
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { print }
 ' "$X301" >"$EVIDENCE/x301-all-branches.txt"
 
-# Locate the named ladder loop from the public fixed counter value 300 through
-# its first backward conditional edge. Keeping the symbol named makes the
-# final-binary gate independent of the compiler's inlining budget.
+# D3 folds the fixed top-one bit into initialization and the two low-zero bits
+# into finalization. Locate the remaining public loop (bits 299 through 2)
+# from its fixed counter value 300 through its backward conditional edge.
 /usr/bin/gawk '
     /^[[:space:]]*[[:xdigit:]]+:/ {
         address = $1
@@ -144,9 +210,9 @@ test "$branches" -eq 1 || {
     exit 1
 }
 /usr/bin/grep -Eq \
-    '^[[:space:]]*[[:xdigit:]]+:[[:space:]]+jb[[:space:]]+[[:xdigit:]]+' \
+    '^[[:space:]]*[[:xdigit:]]+:[[:space:]]+ja[[:space:]]+[[:xdigit:]]+' \
     "$LOOP" || {
-    echo "reviewed fixed 301-round loop edge changed" >&2
+    echo "reviewed fixed bits-299-through-2 loop edge changed" >&2
     exit 1
 }
 if /usr/bin/awk '
@@ -166,7 +232,10 @@ cmov=$(/usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^cmov/ { count++ }
     END { print count + 0 }
 ' "$LOOP")
-test "$cmov" -ge 40 || {
+# One ladder swap selects four five-limb coordinates, so its required
+# lowering accounts for 20 cmovs. Additional cmovs belong to field correction
+# and may legitimately disappear when an arithmetic operation is removed.
+test "$cmov" -ge 20 || {
     echo "constant-time swap/select lowering changed" >&2
     exit 1
 }
@@ -180,12 +249,13 @@ test "$cmov" -ge 40 || {
 ' "$LOOP" >"$EVIDENCE/x301-indexed-memory.txt"
 test "$(/usr/bin/awk 'END { print NR + 0 }' \
         "$EVIDENCE/x301-indexed-memory.txt")" -eq 1
-/usr/bin/grep -Eq 'movzbl[[:space:]]+[^,]*\(%rsp,%rcx,1\),%ecx$' \
-    "$EVIDENCE/x301-indexed-memory.txt" || \
-/usr/bin/grep -Eq 'movzbl[[:space:]]+\(%r[a-z0-9]+,%rcx,1\),%ecx$' \
+/usr/bin/grep -Eq \
+    'movzbl[[:space:]]+[^,]*\(%r[a-z0-9]+,%r[a-z0-9]+,1\),%e[a-z0-9]+$' \
     "$EVIDENCE/x301-indexed-memory.txt"
 
-# The inlined ladder may call only the existing shared field backend.
+# The ladder may either retain the reviewed 10 reduction and four squaring
+# calls or inline that complete field closure.  In the latter case the checks
+# above inspect the arithmetic inside the fixed loop itself.
 /usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^call/ {
         line = $0
@@ -194,25 +264,36 @@ test "$(/usr/bin/awk 'END { print NR + 0 }' \
         print line
     }
 ' "$LOOP" >"$EVIDENCE/x301-ladder-calls.txt"
-test "$(/usr/bin/grep -c '^ed301_eddsa::field_5x64::reduce_wide$' \
-        "$EVIDENCE/x301-ladder-calls.txt")" -eq 10
-test "$(/usr/bin/grep -c '^ed301_eddsa::field_5x64::square_wide$' \
-        "$EVIDENCE/x301-ladder-calls.txt")" -eq 4
-test "$(/usr/bin/awk 'END { print NR + 0 }' \
-        "$EVIDENCE/x301-ladder-calls.txt")" -eq 14
-
-for entry in \
-        'field-reduce:ed301_eddsa::field_5x64::reduce_wide' \
-        'field-square:ed301_eddsa::field_5x64::square_wide'; do
-    label=${entry%%:*}
-    symbol=${entry#*:}
-    section=$EVIDENCE/$label.asm
-    extract_symbol "$symbol" "$section"
-    if forbidden_straight_line "$section"; then
-        echo "shared field primitive is no longer branch-free: $symbol" >&2
+ladder_calls=$(/usr/bin/awk 'END { print NR + 0 }' \
+    "$EVIDENCE/x301-ladder-calls.txt")
+case "$ladder_calls" in
+    0)
+        ladder_field_shape=fully-inlined
+        ;;
+    14)
+        test "$(/usr/bin/grep -c '^ed301_eddsa::field_5x64::reduce_wide$' \
+                "$EVIDENCE/x301-ladder-calls.txt")" -eq 10
+        test "$(/usr/bin/grep -c '^ed301_eddsa::field_5x64::square_wide$' \
+                "$EVIDENCE/x301-ladder-calls.txt")" -eq 4
+        ladder_field_shape=named-leaves
+        for entry in \
+                'field-reduce:ed301_eddsa::field_5x64::reduce_wide' \
+                'field-square:ed301_eddsa::field_5x64::square_wide'; do
+            label=${entry%%:*}
+            symbol=${entry#*:}
+            section=$EVIDENCE/$label.asm
+            extract_symbol "$symbol" "$section"
+            if forbidden_straight_line "$section"; then
+                echo "shared field primitive is no longer branch-free: $symbol" >&2
+                exit 1
+            fi
+        done
+        ;;
+    *)
+        echo "unexpected X301 ladder call closure: $ladder_calls" >&2
         exit 1
-    fi
-done
+        ;;
+esac
 
 # K1: X301 public-key derivation reuses the existing constant-time Edwards
 # fixed-base machinery.  Thin LTO inlines the two radix-16 loops into
@@ -224,7 +305,7 @@ done
 extract_symbol 'ed301_eddsa::x301::public_from_secret' "$PUBLIC"
 extract_symbol 'ed301_eddsa::edwards::select_basepoint' "$BASE_SELECT"
 extract_symbol \
-    '<ed301_eddsa::edwards::AffineNielsPoint>::conditional_select' \
+    'ed301_eddsa::edwards::AffineNielsPoint::conditional_select' \
     "$AFFINE_SELECT"
 
 for section in "$BASE_SELECT" "$AFFINE_SELECT"; do
@@ -252,14 +333,15 @@ if /usr/bin/awk '
     exit 1
 fi
 
-base_select_calls=$(/usr/bin/grep -c \
-    'call.*<ed301_eddsa::edwards::select_basepoint>' "$PUBLIC")
-affine_add_calls=$(/usr/bin/grep -c \
-    'call.*<<ed301_eddsa::edwards::EdwardsPoint>::add_affine>' "$PUBLIC")
-double_calls=$(/usr/bin/grep -c \
-    'call.*<<ed301_eddsa::edwards::EdwardsPoint>::double>' "$PUBLIC")
-invert_calls=$(/usr/bin/grep -c \
-    'call.*<<ed301_eddsa::field_5x64::Fe301>::invert>' "$PUBLIC")
+extract_call_targets "$PUBLIC" "$PUBLIC_CALLS"
+base_select_calls=$(/usr/bin/grep -Fxc \
+    'ed301_eddsa::edwards::select_basepoint' "$PUBLIC_CALLS")
+affine_add_calls=$(/usr/bin/grep -Fxc \
+    'ed301_eddsa::edwards::EdwardsPoint::add_affine' "$PUBLIC_CALLS")
+double_calls=$(/usr/bin/grep -Fxc \
+    'ed301_eddsa::edwards::EdwardsPoint::double' "$PUBLIC_CALLS")
+invert_calls=$(/usr/bin/grep -Fxc \
+    'ed301_eddsa::field_5x64::Fe301::invert' "$PUBLIC_CALLS")
 test "$base_select_calls" -eq 2
 test "$affine_add_calls" -eq 2
 test "$double_calls" -eq 4
@@ -287,7 +369,7 @@ printf 'PASS x301_keygen=fixed-base base_select_sites=%s affine_add_sites=%s dou
 # loops. Secret-taint independently verifies that the scalar cannot influence
 # branch decisions or addresses.
 extract_symbol \
-    '<ed301_eddsa::edwards::EdwardsPoint>::scalar_mul_x301_comb' "$COMB"
+    'ed301_eddsa::edwards::EdwardsPoint::scalar_mul_x301_comb' "$COMB"
 extract_symbol 'ed301_eddsa::edwards::x301_regular_signed_digits' \
     "$COMB_DIGITS"
 for section in "$COMB" "$COMB_DIGITS"; do
@@ -314,9 +396,9 @@ test "$(/usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { count++ }
     END { print count + 0 }
 ' "$COMB")" -eq 4
-test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x10,%rdi' "$COMB")" -eq 1
+test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x10,%' "$COMB")" -eq 1
 test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x131,' "$COMB")" -eq 2
-test "$(/usr/bin/grep -c 'mov[[:space:]]\+\$0x3d,%eax' "$COMB")" -eq 1
+test "$(/usr/bin/grep -c 'mov[[:space:]]\+\$0x3d,%' "$COMB")" -eq 1
 /usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { print }
 ' "$COMB" >"$EVIDENCE/x301-prepared-comb-branches.txt"
@@ -333,20 +415,22 @@ printf '%s\n' \
 # Checker negative control: a synthetic conditional edge must be rejected.
 NEGATIVE=$EVIDENCE/negative-control.asm
 /usr/bin/awk '{ print } END { print "deadbeef: jne deadbeef" }' \
-    "$EVIDENCE/field-reduce.asm" >"$NEGATIVE"
+    "$BASE_SELECT" >"$NEGATIVE"
 if ! forbidden_straight_line "$NEGATIVE" >/dev/null; then
     echo "codegen checker negative control failed" >&2
     exit 1
 fi
 
-printf 'PASS x301_ladder_rounds=301 loop_branches=1 cmov=%s indexed_reads=1\n' \
+printf 'PASS x301_ladder_rounds=301 variable_rounds=298 fixed_doublings=3 loop_branches=1 cmov=%s indexed_reads=1\n' \
     "$cmov" | tee -a "$SUMMARY"
 printf '%s\n' \
-    'PASS field_backend=ed301_eddsa::field_5x64 branch_free=1' \
+    "PASS field_backend=ed301_eddsa::field_5x64 branch_free=1 ladder_shape=$ladder_field_shape" \
     'PASS negative_control=conditional-edge-rejected' | tee -a "$SUMMARY"
-/usr/bin/sha256sum "$MODULE" "$DUMP" "$X301" "$LADDER" "$LOOP" "$PUBLIC" \
-    "$BASE_SELECT" "$AFFINE_SELECT" "$COMB" "$COMB_DIGITS" "$SUMMARY" \
-    >"$EVIDENCE/SHA256SUMS"
+(cd "$EVIDENCE" && \
+    /usr/bin/find . -type f ! -name SHA256SUMS -printf '%P\0' \
+        | /usr/bin/sort -z \
+        | /usr/bin/xargs -0 /usr/bin/sha256sum >SHA256SUMS && \
+    /usr/bin/sha256sum --strict --quiet -c SHA256SUMS)
 printf 'PASS x301_final_codegen module_sha256=%s evidence=%s\n' \
-    "$(/usr/bin/sha256sum "$MODULE" | /usr/bin/awk '{ print $1 }')" \
+    "$SOURCE_MODULE_SHA256" \
     "$EVIDENCE"

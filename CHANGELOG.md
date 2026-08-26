@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Froze the experimental X301/X301MLKEM1024 implementation after independent
+  rereviews and a Standard Codex Security scan with no confirmed product
+  finding. Added a positive deterministic RAND keygen KAT, pre-use artifact
+  seals, authoritative snapshot checks, mangling-neutral codegen matching and
+  unambiguous raw-versus-hybrid artifact names.
+- Closed the X301 rereview findings for selection-dependent key duplication,
+  portable result manifests and benchmark provenance. Added explicit setup,
+  first, second and steady derive measurements. Typed lazy ladder values,
+  projective scaling of the public `A24` constant and the fixed clamped-bit
+  schedule reduce the raw first derive from 75.08 to 58.78 microseconds in a
+  local paired run. Reusing `q*AA` in both doubling outputs removes one small
+  multiplication per doubling. Cold setup plus first derive is about 60.5
+  microseconds; the 1.56x-X25519 target remains open. No new unsafe code or
+  arithmetic backend was added.
 - Added lazy public-peer preparation for repeated X301 derive. A regular
   signed width-5 comb reuses the existing field backend, scans all 16 table
   entries in each of 61 rounds, and falls back to the ladder for first-use,
