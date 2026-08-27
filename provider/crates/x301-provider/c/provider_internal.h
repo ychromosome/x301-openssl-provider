@@ -21,7 +21,7 @@
 #define x301_param_set_optional_octet_string ed301d00_param_set_optional_octet_string
 #define x301_param_set_optional_utf8_ptr ed301d00_param_set_optional_utf8_ptr
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
-# include <openssl/evp.h>
+#include <openssl/evp.h>
 #endif
 
 typedef struct x301_rust_api_st {
@@ -95,6 +95,28 @@ typedef struct x301_provider_context_st {
     OSSL_FUNC_core_vset_error_fn *vset_error;
     const X301_RUST_API *rust;
 } X301_PROVIDER_CONTEXT;
+
+enum {
+    X301_R_INVALID_KEY = 1,
+    X301_R_INVALID_STATE = 2,
+    X301_R_INVALID_PARAMETER = 3,
+    X301_R_ALLOCATION_FAILURE = 4,
+    X301_R_RANDOM_FAILURE = 5,
+    X301_R_INTERNAL_ERROR = 6
+};
+
+void x301_raise_error(
+    X301_PROVIDER_CONTEXT *provider,
+    uint32_t reason,
+    const char *file,
+    int line,
+    const char *function,
+    const char *format,
+    ...);
+
+#define X301_RAISE(provider, reason, ...)                                \
+    x301_raise_error((provider), (reason), __FILE__, __LINE__, __func__, \
+        __VA_ARGS__)
 
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
 extern const OSSL_DISPATCH X301_MLKEM1024_KEYMGMT_DISPATCH[];

@@ -394,11 +394,13 @@ static int encapsulation_short_buffers_are_atomic(
     ERR_clear_error();
     if (EVP_PKEY_encapsulate(
             context, ciphertext, &ciphertext_length,
-            secret, &secret_length) > 0
-            || ciphertext_length != HYBRID_CIPHERTEXT_BYTES
-            || secret_length != HYBRID_SECRET_BYTES
-            || !buffer_is(ciphertext, sizeof(ciphertext), 0xa5)
-            || !buffer_is(secret, sizeof(secret), 0xa5))
+            secret, &secret_length)
+            > 0
+        || ciphertext_length != HYBRID_CIPHERTEXT_BYTES
+        || secret_length != HYBRID_SECRET_BYTES
+        || ERR_peek_error() == 0
+        || !buffer_is(ciphertext, sizeof(ciphertext), 0xa5)
+        || !buffer_is(secret, sizeof(secret), 0xa5))
         goto done;
     ERR_clear_error();
 
@@ -406,11 +408,13 @@ static int encapsulation_short_buffers_are_atomic(
     secret_length = HYBRID_SECRET_BYTES - 1U;
     if (EVP_PKEY_encapsulate(
             context, ciphertext, &ciphertext_length,
-            secret, &secret_length) > 0
-            || ciphertext_length != HYBRID_CIPHERTEXT_BYTES
-            || secret_length != HYBRID_SECRET_BYTES
-            || !buffer_is(ciphertext, sizeof(ciphertext), 0xa5)
-            || !buffer_is(secret, sizeof(secret), 0xa5))
+            secret, &secret_length)
+            > 0
+        || ciphertext_length != HYBRID_CIPHERTEXT_BYTES
+        || secret_length != HYBRID_SECRET_BYTES
+        || ERR_peek_error() == 0
+        || !buffer_is(ciphertext, sizeof(ciphertext), 0xa5)
+        || !buffer_is(secret, sizeof(secret), 0xa5))
         goto done;
     result = 1;
 
@@ -439,8 +443,10 @@ static int decapsulation_failure_is_atomic(
     memset(output, 0xa5, sizeof(output));
     ERR_clear_error();
     result = EVP_PKEY_decapsulate(
-            context, output, &output_length,
-            ciphertext, ciphertext_length) <= 0
+                 context, output, &output_length,
+                 ciphertext, ciphertext_length)
+            <= 0
+        && ERR_peek_error() != 0
         && buffer_is(output, sizeof(output), 0xa5);
 
 done:

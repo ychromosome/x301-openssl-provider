@@ -78,20 +78,13 @@ typedef struct x301_exchange_st {
     void *inner;
 } X301_EXCHANGE;
 
-enum {
-    X301_R_INVALID_KEY = 1,
-    X301_R_INVALID_STATE = 2,
-    X301_R_INVALID_PARAMETER = 3,
-    X301_R_ALLOCATION_FAILURE = 4,
-    X301_R_RANDOM_FAILURE = 5
-};
-
 static const OSSL_ITEM X301_REASON_STRINGS[] = {
     { X301_R_INVALID_KEY, "invalid X301 key" },
     { X301_R_INVALID_STATE, "invalid X301 operation state" },
     { X301_R_INVALID_PARAMETER, "invalid X301 parameter" },
     { X301_R_ALLOCATION_FAILURE, "X301 allocation failure" },
     { X301_R_RANDOM_FAILURE, "X301 private random generation failure" },
+    { X301_R_INTERNAL_ERROR, "X301 internal provider error" },
     { 0, NULL }
 };
 
@@ -182,9 +175,12 @@ static int x301_params_are_empty(const OSSL_PARAM params[])
     return params == NULL || params[0].key == NULL;
 }
 
-static void x301_raise(
+void x301_raise_error(
     X301_PROVIDER_CONTEXT *provider,
     uint32_t reason,
+    const char *file,
+    int line,
+    const char *function,
     const char *format,
     ...)
 {
@@ -196,7 +192,7 @@ static void x301_raise(
         return;
 
     provider->new_error(provider->handle);
-    provider->set_error_debug(provider->handle, __FILE__, __LINE__, __func__);
+    provider->set_error_debug(provider->handle, file, line, function);
     va_start(arguments, format);
     provider->vset_error(provider->handle, reason, format, arguments);
     va_end(arguments);
@@ -227,7 +223,7 @@ static X301_KEY *x301_wrap_key(X301_PROVIDER_CONTEXT *provider, void *inner)
     key = x301_allocate(provider, sizeof(*key));
     if (key == NULL) {
         provider->rust->key_free(inner);
-        x301_raise(provider, X301_R_ALLOCATION_FAILURE,
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
             "X301 key wrapper allocation failed");
         return NULL;
     }
@@ -245,7 +241,7 @@ static void *x301_key_new(void *provider_context)
         return NULL;
     inner = provider->rust->key_new();
     if (inner == NULL) {
-        x301_raise(provider, X301_R_ALLOCATION_FAILURE,
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
             "X301 key allocation failed");
         return NULL;
     }
@@ -325,7 +321,7 @@ static int x301_key_import(
     return 1;
 
 invalid:
-    x301_raise(key->provider, X301_R_INVALID_KEY,
+    X301_RAISE(key->provider, X301_R_INVALID_KEY,
         "invalid X301 key material");
     return 0;
 }
@@ -397,7 +393,7 @@ cleanup:
     if (key != NULL && key->provider != NULL && key->provider->rust != NULL)
         key->provider->rust->cleanse(private_key, sizeof(private_key));
     if (result != 1 && key != NULL)
-        x301_raise(key->provider, X301_R_INVALID_KEY,
+        X301_RAISE(key->provider, X301_R_INVALID_KEY,
             "X301 key export failed");
     return result == 1 ? 1 : 0;
 }
@@ -464,7 +460,7 @@ cleanup:
     if (key != NULL && key->provider != NULL && key->provider->rust != NULL)
         key->provider->rust->cleanse(private_key, sizeof(private_key));
     if (result != 1 && key != NULL)
-        x301_raise(key->provider, X301_R_INVALID_PARAMETER,
+        X301_RAISE(key->provider, X301_R_INVALID_PARAMETER,
             "X301 key parameter query failed");
     return result;
 }
@@ -496,7 +492,7 @@ static int x301_key_set_params(void *key_data, const OSSL_PARAM params[])
             1)
             || key->provider->rust->key_set_encoded_public(
                 key->inner, public_key, public_length) != 1) {
-        x301_raise(key->provider, X301_R_INVALID_KEY,
+        X301_RAISE(key->provider, X301_R_INVALID_KEY,
             "invalid X301 encoded public key");
         return 0;
     }
@@ -534,7 +530,7 @@ static int x301_key_validate(
         x301_wants_private(selection),
         x301_wants_public(selection));
     if (result != 1)
-        x301_raise(key->provider, X301_R_INVALID_KEY,
+        X301_RAISE(key->provider, X301_R_INVALID_KEY,
             "X301 key validation failed");
     return result;
 }
@@ -598,7 +594,7 @@ static int x301_key_gen_set_params(
     if (generation == NULL || generation->provider == NULL)
         return 0;
     if (!x301_utf8_param_equals(params, OSSL_PKEY_PARAM_GROUP_NAME, X301_NAME)) {
-        x301_raise(generation->provider, X301_R_INVALID_PARAMETER,
+        X301_RAISE(generation->provider, X301_R_INVALID_PARAMETER,
             "invalid X301 generation group");
         return 0;
     }
@@ -621,13 +617,13 @@ static void *x301_key_gen_init(
     if (provider == NULL
             || (!generates_keypair && !generates_parameters)
             || !x301_selection_supported(selection)) {
-        x301_raise(provider, X301_R_INVALID_PARAMETER,
+        X301_RAISE(provider, X301_R_INVALID_PARAMETER,
             "invalid X301 key generation selection");
         return NULL;
     }
     generation = x301_allocate(provider, sizeof(*generation));
     if (generation == NULL) {
-        x301_raise(provider, X301_R_ALLOCATION_FAILURE,
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
             "X301 generation-context allocation failed");
         return NULL;
     }
@@ -667,7 +663,12 @@ static void *x301_generate_raw_key_internal(X301_PROVIDER_CONTEXT *provider)
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
 void *x301_generate_raw_key(X301_PROVIDER_CONTEXT *provider)
 {
-    return x301_generate_raw_key_internal(provider);
+    void *key = x301_generate_raw_key_internal(provider);
+
+    if (key == NULL)
+        X301_RAISE(provider, X301_R_RANDOM_FAILURE,
+            "OpenSSL private RAND or X301 key generation failed");
+    return key;
 }
 #endif
 
@@ -694,7 +695,7 @@ static void *x301_key_gen(
         inner = x301_generate_raw_key_internal(provider);
     }
     if (inner == NULL) {
-        x301_raise(provider, X301_R_RANDOM_FAILURE,
+        X301_RAISE(provider, X301_R_RANDOM_FAILURE,
             "OpenSSL private RAND or X301 key generation failed");
         goto cleanup;
     }
@@ -731,7 +732,7 @@ static X301_EXCHANGE *x301_wrap_exchange(
     exchange = x301_allocate(provider, sizeof(*exchange));
     if (exchange == NULL) {
         provider->rust->exchange_free(inner);
-        x301_raise(provider, X301_R_ALLOCATION_FAILURE,
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
             "X301 exchange-context allocation failed");
         return NULL;
     }
@@ -749,7 +750,7 @@ static void *x301_exchange_new(void *provider_context)
         return NULL;
     inner = provider->rust->exchange_new();
     if (inner == NULL) {
-        x301_raise(provider, X301_R_ALLOCATION_FAILURE,
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
             "X301 exchange-context allocation failed");
         return NULL;
     }
@@ -798,7 +799,7 @@ static int x301_exchange_init(
     result = exchange->provider->rust->exchange_init(
         exchange->inner, key->inner);
     if (result != 1)
-        x301_raise(exchange->provider, X301_R_INVALID_KEY,
+        X301_RAISE(exchange->provider, X301_R_INVALID_KEY,
             "X301 exchange requires a private key");
     return result;
 }
@@ -818,7 +819,7 @@ static int x301_exchange_set_peer(
     result = exchange->provider->rust->exchange_set_peer(
         exchange->inner, peer->inner);
     if (result != 1)
-        x301_raise(exchange->provider, X301_R_INVALID_KEY,
+        X301_RAISE(exchange->provider, X301_R_INVALID_KEY,
             "invalid X301 peer key");
     return result;
 }
@@ -842,7 +843,7 @@ static int x301_exchange_derive(
     }
     if (output_length < X301_BYTES) {
         *secret_length = X301_BYTES;
-        x301_raise(exchange->provider, X301_R_INVALID_PARAMETER,
+        X301_RAISE(exchange->provider, X301_R_INVALID_PARAMETER,
             "X301 output buffer is too small");
         return 0;
     }
@@ -850,7 +851,7 @@ static int x301_exchange_derive(
     *secret_length = 0;
     if (exchange->provider->rust->exchange_derive(
             exchange->inner, result, sizeof(result)) != 1) {
-        x301_raise(exchange->provider, X301_R_INVALID_STATE,
+        X301_RAISE(exchange->provider, X301_R_INVALID_STATE,
             "X301 key exchange failed");
         goto cleanup;
     }

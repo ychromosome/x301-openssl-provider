@@ -147,10 +147,15 @@ static int mlkem_get_public(
 
 static void *hybrid_key_new(void *provider_context)
 {
-    HYBRID_KEY *key = hybrid_alloc(provider_context, sizeof(*key));
+    X301_PROVIDER_CONTEXT *provider = provider_context;
+    HYBRID_KEY *key = hybrid_alloc(provider, sizeof(*key));
 
-    if (key != NULL)
-        key->provider = provider_context;
+    if (key == NULL) {
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
+            "X301MLKEM1024 key allocation failed");
+        return NULL;
+    }
+    key->provider = provider;
     return key;
 }
 
@@ -195,26 +200,40 @@ static int hybrid_key_get_params(void *key_data, OSSL_PARAM params[])
     OSSL_PARAM *encoded;
     unsigned char public_key[HYBRID_PUBLIC_BYTES];
 
-    if (key == NULL || key->provider == NULL || params == NULL
-            || !x301_param_set_optional_int(
-                OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_BITS), HYBRID_BITS)
-            || !x301_param_set_optional_int(
-                OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_SECURITY_BITS),
-                HYBRID_SECURITY_BITS)
-            || !x301_param_set_optional_int(
-                OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_MAX_SIZE),
-                (int)HYBRID_CIPHERTEXT_BYTES))
+    if (key == NULL || key->provider == NULL)
         return 0;
+    if (params == NULL
+        || !x301_param_set_optional_int(
+            OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_BITS), HYBRID_BITS)
+        || !x301_param_set_optional_int(
+            OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_SECURITY_BITS),
+            HYBRID_SECURITY_BITS)
+        || !x301_param_set_optional_int(
+            OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_MAX_SIZE),
+            (int)HYBRID_CIPHERTEXT_BYTES)) {
+        X301_RAISE(key->provider, X301_R_INVALID_PARAMETER,
+            "invalid X301MLKEM1024 key parameter query");
+        return 0;
+    }
     encoded = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY);
     if (encoded == NULL)
         return 1;
     if (key->state < KEY_PUBLIC
-            || !mlkem_get_public(key->mlkem, public_key)
-            || key->provider->rust->key_get_public(
-                key->x301, public_key + ML_PUBLIC_BYTES, X_BYTES) != 1)
+        || !mlkem_get_public(key->mlkem, public_key)
+        || key->provider->rust->key_get_public(
+               key->x301, public_key + ML_PUBLIC_BYTES, X_BYTES)
+            != 1) {
+        X301_RAISE(key->provider, X301_R_INVALID_KEY,
+            "X301MLKEM1024 public key is unavailable");
         return 0;
-    return x301_param_set_optional_octet_string(
-        encoded, public_key, sizeof(public_key));
+    }
+    if (!x301_param_set_optional_octet_string(
+            encoded, public_key, sizeof(public_key))) {
+        X301_RAISE(key->provider, X301_R_INVALID_PARAMETER,
+            "invalid X301MLKEM1024 encoded-public-key output parameter");
+        return 0;
+    }
+    return 1;
 }
 
 static const OSSL_PARAM *hybrid_key_settable(void *provider_context)
@@ -232,20 +251,34 @@ static int hybrid_key_set_params(void *key_data, const OSSL_PARAM params[])
     EVP_PKEY *mlkem = NULL;
     int result = 0;
 
-    if (key == NULL || key->provider == NULL || key->provider->rust == NULL
-            || key->state != KEY_EMPTY
-            || !x301_param_get_strict_octet_string(
-                params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
-                &public_key, &public_length, HYBRID_PUBLIC_BYTES, 0))
+    if (key == NULL || key->provider == NULL || key->provider->rust == NULL)
         return 0;
+    if (key->state != KEY_EMPTY
+        || !x301_param_get_strict_octet_string(
+            params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
+            &public_key, &public_length, HYBRID_PUBLIC_BYTES, 0)) {
+        X301_RAISE(key->provider, X301_R_INVALID_PARAMETER,
+            "invalid X301MLKEM1024 encoded public key parameter");
+        return 0;
+    }
     if (public_key == NULL)
         return 1;
     mlkem = mlkem_import_public(key->provider, public_key);
     x301 = key->provider->rust->key_new();
-    if (mlkem == NULL || x301 == NULL
-            || key->provider->rust->key_set_encoded_public(
-                x301, public_key + ML_PUBLIC_BYTES, X_BYTES) != 1)
+    if (mlkem == NULL)
         goto cleanup;
+    if (x301 == NULL) {
+        X301_RAISE(key->provider, X301_R_ALLOCATION_FAILURE,
+            "X301MLKEM1024 X301 key allocation failed");
+        goto cleanup;
+    }
+    if (key->provider->rust->key_set_encoded_public(
+            x301, public_key + ML_PUBLIC_BYTES, X_BYTES)
+        != 1) {
+        X301_RAISE(key->provider, X301_R_INVALID_KEY,
+            "invalid X301 component in X301MLKEM1024 public key");
+        goto cleanup;
+    }
     key->mlkem = mlkem;
     key->x301 = x301;
     key->state = KEY_PUBLIC;
@@ -277,12 +310,19 @@ static void *hybrid_gen_init(
     const int parameters = !keypair
         && (selection & OSSL_KEYMGMT_SELECT_ALL_PARAMETERS) != 0;
 
-    if (provider == NULL || (!keypair && !parameters)
-            || !group_matches(params))
+    if (provider == NULL)
         return NULL;
+    if ((!keypair && !parameters) || !group_matches(params)) {
+        X301_RAISE(provider, X301_R_INVALID_PARAMETER,
+            "invalid X301MLKEM1024 generation parameters");
+        return NULL;
+    }
     generation = hybrid_alloc(provider, sizeof(*generation));
-    if (generation == NULL)
+    if (generation == NULL) {
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
+            "X301MLKEM1024 generation-context allocation failed");
         return NULL;
+    }
     generation->provider = provider;
     generation->keypair = keypair;
     return generation;
@@ -322,7 +362,16 @@ static int hybrid_gen_set_params(
     void *generation_data,
     const OSSL_PARAM params[])
 {
-    return generation_data != NULL && group_matches(params);
+    HYBRID_GEN_CTX *generation = generation_data;
+
+    if (generation == NULL)
+        return 0;
+    if (!group_matches(params)) {
+        X301_RAISE(generation->provider, X301_R_INVALID_PARAMETER,
+            "invalid X301MLKEM1024 generation group");
+        return 0;
+    }
+    return 1;
 }
 
 static const OSSL_PARAM *hybrid_gen_settable(
@@ -347,10 +396,15 @@ static void hybrid_gen_cleanup(void *generation_data)
 
 static void *hybrid_kem_new(void *provider_context)
 {
-    HYBRID_KEM_CTX *context = hybrid_alloc(provider_context, sizeof(*context));
+    X301_PROVIDER_CONTEXT *provider = provider_context;
+    HYBRID_KEM_CTX *context = hybrid_alloc(provider, sizeof(*context));
 
-    if (context != NULL)
-        context->provider = provider_context;
+    if (context == NULL) {
+        X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
+            "X301MLKEM1024 KEM-context allocation failed");
+        return NULL;
+    }
+    context->provider = provider;
     return context;
 }
 
@@ -371,12 +425,20 @@ static int hybrid_kem_init(
     const OSSL_PARAM params[],
     int operation)
 {
-    if (context == NULL || context->provider == NULL || key == NULL
-            || key->provider != context->provider
-            || (params != NULL && params[0].key != NULL)
-            || (operation == KEM_ENCAPSULATE && key->state < KEY_PUBLIC)
-            || (operation == KEM_DECAPSULATE && key->state != KEY_PRIVATE))
+    if (context == NULL || context->provider == NULL)
         return 0;
+    if (params != NULL && params[0].key != NULL) {
+        X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
+            "X301MLKEM1024 KEM parameters are unsupported");
+        return 0;
+    }
+    if (key == NULL || key->provider != context->provider
+        || (operation == KEM_ENCAPSULATE && key->state < KEY_PUBLIC)
+        || (operation == KEM_DECAPSULATE && key->state != KEY_PRIVATE)) {
+        X301_RAISE(context->provider, X301_R_INVALID_KEY,
+            "invalid X301MLKEM1024 KEM key");
+        return 0;
+    }
     context->key = key;
     context->operation = operation;
     return 1;
@@ -417,12 +479,19 @@ static int hybrid_encapsulate(
     size_t mlkem_secret_length = ML_SECRET_BYTES;
     int result = 0;
 
-    if (context == NULL || context->provider == NULL
-            || context->operation != KEM_ENCAPSULATE || context->key == NULL)
+    if (context == NULL || context->provider == NULL)
         return 0;
+    if (context->operation != KEM_ENCAPSULATE || context->key == NULL) {
+        X301_RAISE(context->provider, X301_R_INVALID_STATE,
+            "X301MLKEM1024 encapsulation is not initialized");
+        return 0;
+    }
     if (ciphertext == NULL) {
-        if (ciphertext_length == NULL && shared_secret_length == NULL)
+        if (ciphertext_length == NULL && shared_secret_length == NULL) {
+            X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
+                "X301MLKEM1024 encapsulation length output is missing");
             return 0;
+        }
         if (ciphertext_length != NULL)
             *ciphertext_length = HYBRID_CIPHERTEXT_BYTES;
         if (shared_secret_length != NULL)
@@ -430,40 +499,63 @@ static int hybrid_encapsulate(
         return 1;
     }
     if (ciphertext_length == NULL || shared_secret == NULL
-            || shared_secret_length == NULL)
+        || shared_secret_length == NULL) {
+        X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
+            "invalid X301MLKEM1024 encapsulation output");
         return 0;
+    }
     if (*ciphertext_length < HYBRID_CIPHERTEXT_BYTES
             || *shared_secret_length < HYBRID_SECRET_BYTES) {
         *ciphertext_length = HYBRID_CIPHERTEXT_BYTES;
         *shared_secret_length = HYBRID_SECRET_BYTES;
+        X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
+            "X301MLKEM1024 encapsulation output buffer is too small");
         return 0;
     }
 
     mlkem_context = EVP_PKEY_CTX_new_from_pkey(
         context->provider->libctx, context->key->mlkem, ML_PROPERTIES);
     if (mlkem_context == NULL
-            || EVP_PKEY_encapsulate_init(mlkem_context, NULL) <= 0
-            || EVP_PKEY_encapsulate(
-                mlkem_context,
-                temporary_ciphertext, &mlkem_ciphertext_length,
-                temporary_secret, &mlkem_secret_length) <= 0
-            || mlkem_ciphertext_length != ML_CIPHERTEXT_BYTES
-            || mlkem_secret_length != ML_SECRET_BYTES)
+        || EVP_PKEY_encapsulate_init(mlkem_context, NULL) <= 0
+        || EVP_PKEY_encapsulate(
+               mlkem_context,
+               temporary_ciphertext, &mlkem_ciphertext_length,
+               temporary_secret, &mlkem_secret_length)
+            <= 0)
         goto cleanup;
+    if (mlkem_ciphertext_length != ML_CIPHERTEXT_BYTES
+        || mlkem_secret_length != ML_SECRET_BYTES) {
+        X301_RAISE(context->provider, X301_R_INTERNAL_ERROR,
+            "unexpected ML-KEM-1024 encapsulation output length");
+        goto cleanup;
+    }
 
     server_x301 = x301_generate_raw_key(context->provider);
     exchange = context->provider->rust->exchange_new();
-    if (server_x301 == NULL || exchange == NULL
-            || context->provider->rust->key_get_public(
-                server_x301,
-                temporary_ciphertext + ML_CIPHERTEXT_BYTES, X_BYTES) != 1
-            || context->provider->rust->exchange_init(
-                exchange, server_x301) != 1
-            || context->provider->rust->exchange_set_peer(
-                exchange, context->key->x301) != 1
-            || context->provider->rust->exchange_derive(
-                exchange, temporary_secret + ML_SECRET_BYTES, X_BYTES) != 1)
+    if (server_x301 == NULL)
         goto cleanup;
+    if (exchange == NULL) {
+        X301_RAISE(context->provider, X301_R_ALLOCATION_FAILURE,
+            "X301MLKEM1024 exchange-context allocation failed");
+        goto cleanup;
+    }
+    if (context->provider->rust->key_get_public(
+            server_x301,
+            temporary_ciphertext + ML_CIPHERTEXT_BYTES, X_BYTES)
+            != 1
+        || context->provider->rust->exchange_init(
+               exchange, server_x301)
+            != 1
+        || context->provider->rust->exchange_set_peer(
+               exchange, context->key->x301)
+            != 1
+        || context->provider->rust->exchange_derive(
+               exchange, temporary_secret + ML_SECRET_BYTES, X_BYTES)
+            != 1) {
+        X301_RAISE(context->provider, X301_R_INTERNAL_ERROR,
+            "X301MLKEM1024 X301 encapsulation failed");
+        goto cleanup;
+    }
 
     memcpy(ciphertext, temporary_ciphertext, sizeof(temporary_ciphertext));
     memcpy(shared_secret, temporary_secret, sizeof(temporary_secret));
@@ -496,45 +588,73 @@ static int hybrid_decapsulate(
     size_t mlkem_secret_length = ML_SECRET_BYTES;
     int result = 0;
 
-    if (context == NULL || context->provider == NULL
-            || context->operation != KEM_DECAPSULATE || context->key == NULL)
+    if (context == NULL || context->provider == NULL)
         return 0;
+    if (context->operation != KEM_DECAPSULATE || context->key == NULL) {
+        X301_RAISE(context->provider, X301_R_INVALID_STATE,
+            "X301MLKEM1024 decapsulation is not initialized");
+        return 0;
+    }
     if (shared_secret == NULL) {
-        if (shared_secret_length == NULL)
+        if (shared_secret_length == NULL) {
+            X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
+                "X301MLKEM1024 decapsulation length output is missing");
             return 0;
+        }
         *shared_secret_length = HYBRID_SECRET_BYTES;
         return 1;
     }
     if (shared_secret_length == NULL || ciphertext == NULL
-            || ciphertext_length != HYBRID_CIPHERTEXT_BYTES)
+        || ciphertext_length != HYBRID_CIPHERTEXT_BYTES) {
+        X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
+            "invalid X301MLKEM1024 decapsulation input");
         return 0;
+    }
     if (*shared_secret_length < HYBRID_SECRET_BYTES) {
         *shared_secret_length = HYBRID_SECRET_BYTES;
+        X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
+            "X301MLKEM1024 decapsulation output buffer is too small");
         return 0;
     }
 
     mlkem_context = EVP_PKEY_CTX_new_from_pkey(
         context->provider->libctx, context->key->mlkem, ML_PROPERTIES);
     if (mlkem_context == NULL
-            || EVP_PKEY_decapsulate_init(mlkem_context, NULL) <= 0
-            || EVP_PKEY_decapsulate(
-                mlkem_context, temporary_secret, &mlkem_secret_length,
-                ciphertext, ML_CIPHERTEXT_BYTES) <= 0
-            || mlkem_secret_length != ML_SECRET_BYTES)
+        || EVP_PKEY_decapsulate_init(mlkem_context, NULL) <= 0
+        || EVP_PKEY_decapsulate(
+               mlkem_context, temporary_secret, &mlkem_secret_length,
+               ciphertext, ML_CIPHERTEXT_BYTES)
+            <= 0)
         goto cleanup;
+    if (mlkem_secret_length != ML_SECRET_BYTES) {
+        X301_RAISE(context->provider, X301_R_INTERNAL_ERROR,
+            "unexpected ML-KEM-1024 decapsulation output length");
+        goto cleanup;
+    }
 
     peer_x301 = context->provider->rust->key_new();
     exchange = context->provider->rust->exchange_new();
-    if (peer_x301 == NULL || exchange == NULL
-            || context->provider->rust->key_set_encoded_public(
-                peer_x301, ciphertext + ML_CIPHERTEXT_BYTES, X_BYTES) != 1
-            || context->provider->rust->exchange_init(
-                exchange, context->key->x301) != 1
-            || context->provider->rust->exchange_set_peer(
-                exchange, peer_x301) != 1
-            || context->provider->rust->exchange_derive(
-                exchange, temporary_secret + ML_SECRET_BYTES, X_BYTES) != 1)
+    if (peer_x301 == NULL || exchange == NULL) {
+        X301_RAISE(context->provider, X301_R_ALLOCATION_FAILURE,
+            "X301MLKEM1024 decapsulation-context allocation failed");
         goto cleanup;
+    }
+    if (context->provider->rust->key_set_encoded_public(
+            peer_x301, ciphertext + ML_CIPHERTEXT_BYTES, X_BYTES)
+            != 1
+        || context->provider->rust->exchange_init(
+               exchange, context->key->x301)
+            != 1
+        || context->provider->rust->exchange_set_peer(
+               exchange, peer_x301)
+            != 1
+        || context->provider->rust->exchange_derive(
+               exchange, temporary_secret + ML_SECRET_BYTES, X_BYTES)
+            != 1) {
+        X301_RAISE(context->provider, X301_R_INVALID_KEY,
+            "invalid X301 component in X301MLKEM1024 ciphertext");
+        goto cleanup;
+    }
 
     memcpy(shared_secret, temporary_secret, sizeof(temporary_secret));
     *shared_secret_length = sizeof(temporary_secret);
