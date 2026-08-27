@@ -170,7 +170,7 @@ run_lane() {
         "$modules/ed301_eddsa_draft00.so"
 
     # M6 uses a separately copied, test-only Rust failpoint artifact.  The
-    # ordinary module must remain byte-free of both environment-hook names.
+    # ordinary module must remain byte-free of the environment-hook names.
     (
         cd "$ROOT/provider"
         env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
@@ -188,7 +188,8 @@ run_lane() {
     )
     cp "$failpoint_target/release/libx301.so" "$failpoint_modules/x301.so"
     if /usr/bin/strings "$modules/x301.so" \
-            | grep -E 'X301_PROVIDER_(PANIC|ALLOC)_FAILPOINT' >/dev/null; then
+            | grep -E 'X301_PROVIDER_((PANIC|ALLOC)_FAILPOINT|PUBLIC_ALIAS_MASK)' \
+                >/dev/null; then
         printf 'ordinary X301 module contains a test failpoint hook\n' >&2
         exit 1
     fi
@@ -196,6 +197,8 @@ run_lane() {
         | grep -F X301_PROVIDER_PANIC_FAILPOINT >/dev/null
     /usr/bin/strings "$failpoint_modules/x301.so" \
         | grep -F X301_PROVIDER_ALLOC_FAILPOINT >/dev/null
+    /usr/bin/strings "$failpoint_modules/x301.so" \
+        | grep -F X301_PROVIDER_PUBLIC_ALIAS_MASK >/dev/null
 
     # F4: test-only C-boundary/hybrid-parser instrumentation in the provider
     # DSO.  Stable rustc supplies no supported whole-crate sanitizer switch;

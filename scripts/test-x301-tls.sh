@@ -36,6 +36,7 @@ SERVER_PORT=
 CLIENT_PORT=
 PROXY_PID=
 PROXY_LOG=
+PUBLIC_ALIAS_MASK=
 
 if test "$#" -ne 4; then
     printf 'usage: %s <3.5.7-lane-root> <3.5.7-evidence-sha256> <4.0.1-lane-root> <4.0.1-evidence-sha256>\n' \
@@ -181,6 +182,7 @@ start_server() {
         : >"$SERVER_LOG"
         env -i PATH=/usr/bin:/bin LC_ALL=C HOME="$home" \
             OPENSSL_CONF=/dev/null OPENSSL_MODULES="$modules" \
+            X301_PROVIDER_PUBLIC_ALIAS_MASK="$PUBLIC_ALIAS_MASK" \
             LD_LIBRARY_PATH="$prefix/lib" \
             /usr/bin/timeout "$server_timeout" \
             "$openssl" s_server \
@@ -296,6 +298,7 @@ run_client() {
 
     env -i PATH=/usr/bin:/bin LC_ALL=C HOME="$home" \
         OPENSSL_CONF=/dev/null OPENSSL_MODULES="$modules" \
+        X301_PROVIDER_PUBLIC_ALIAS_MASK="$PUBLIC_ALIAS_MASK" \
         LD_LIBRARY_PATH="$prefix/lib" \
         /usr/bin/timeout 30 \
         "$openssl" s_client \
@@ -558,12 +561,14 @@ run_lane() {
     local openssl=$prefix/bin/openssl
     local build=$RESULT_ROOT/$lane
     local target=$build/target
+    local alias_target=$build/target-alias
     local modules=$build/modules
+    local alias_modules=$build/modules-alias
     local cargo_home=$build/cargo-home
     local cert=$build/cert.pem
     local key=$build/key.pem
     local first_mlkem resumed_mlkem first_x301 resumed_x301
-    local client_status
+    local alias_dir alias_label alias_mask client_status
 
     "$ROOT/scripts/verify-openssl-provider-lane.sh" \
         "$lane_root" "$lane" "$lane_evidence"
@@ -571,7 +576,9 @@ run_lane() {
     test -x "$KEYSHARE_PARSER" || fail "missing executable $KEYSHARE_PARSER"
     test -x "$TRACE_INSPECTOR" || fail "missing executable $TRACE_INSPECTOR"
     test -x "$WIRE_MUTATOR" || fail "missing executable $WIRE_MUTATOR"
-    mkdir -m 700 -p "$target" "$modules" "$cargo_home" "$build"
+    mkdir -m 700 -p \
+        "$target" "$alias_target" "$modules" "$alias_modules" \
+        "$cargo_home" "$build"
     printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
         >"$build/request.txt"
 
@@ -602,12 +609,67 @@ run_lane() {
         /usr/bin/sha256sum --strict --quiet -c PREUSE_SHA256SUMS
     )
 
+    (
+        cd "$ROOT/provider"
+        env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
+            CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$alias_target" \
+            CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            RUSTC="$RUSTC" \
+            CC=/usr/bin/gcc AR=/usr/bin/ar \
+            X301_HERMETIC_PROVIDER_BUILD=1 \
+            OPENSSL_INCLUDE_DIR="$prefix/include" \
+            OPENSSL_LIB_DIR="$prefix/lib" \
+            LD_LIBRARY_PATH="$prefix/lib" \
+            "$CARGO" build --release --locked --offline \
+                -p x301-provider \
+                --features tls-x301-mlkem1024,test-failpoint
+    ) >"$build/cargo-build-alias.log" 2>&1
+    cp "$alias_target/release/libx301.so" "$alias_modules/x301.so"
+    reject_text X301_PROVIDER_PUBLIC_ALIAS_MASK "$modules/x301.so"
+    require_text X301_PROVIDER_PUBLIC_ALIAS_MASK "$alias_modules/x301.so"
+
     env -i PATH=/usr/bin:/bin LC_ALL=C HOME="$build" \
         OPENSSL_CONF=/dev/null LD_LIBRARY_PATH="$prefix/lib" \
         "$openssl" req -x509 -newkey rsa:2048 -nodes -sha256 \
             -subj /CN=localhost -addext subjectAltName=DNS:localhost \
             -keyout "$key" -out "$cert" -days 1 \
             >"$build/certificate-generation.log" 2>&1
+
+    alias_dir=$build/d2-alias
+    mkdir -m 700 -- "$alias_dir"
+    printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' \
+        >"$alias_dir/request.txt"
+    printf 'mask\tclient\tserver\n' >"$alias_dir/RESULTS.tsv"
+    for alias_mask in 20 40 60 80 a0 c0 e0; do
+        PUBLIC_ALIAS_MASK=$alias_mask
+        alias_label=d2-alias-$alias_mask
+        start_server "$openssl" "$prefix" "$alias_modules" \
+            "$alias_dir" "$cert" "$key" MLKEM1024X301 1 yes \
+            "$alias_label"
+        run_client "$openssl" "$prefix" "$alias_modules" \
+            "$alias_dir" "$cert" MLKEM1024X301 "$alias_label" \
+            -msg -msgfile "$alias_dir/$alias_label.msg"
+        require_text 'Negotiated TLS1.3 group: MLKEM1024X301' \
+            "$alias_dir/$alias_label-client.log"
+        "$KEYSHARE_PARSER" "$alias_dir/$alias_label.msg" client \
+            | tee "$alias_dir/$alias_label-client-keyshare.txt"
+        require_text "x301_unused_bits=0x$alias_mask" \
+            "$alias_dir/$alias_label-client-keyshare.txt"
+        "$KEYSHARE_PARSER" "$alias_dir/$alias_label.msg" server \
+            | tee "$alias_dir/$alias_label-server-keyshare.txt"
+        require_text "x301_unused_bits=0x$alias_mask" \
+            "$alias_dir/$alias_label-server-keyshare.txt"
+        finish_server yes
+        printf '%s\tPASS\tPASS\n' "$alias_mask" \
+            >>"$alias_dir/RESULTS.tsv"
+    done
+    PUBLIC_ALIAS_MASK=
+    (
+        cd "$alias_dir"
+        find . -type f ! -name SHA256SUMS -exec sha256sum {} + | sort -k2 \
+            >SHA256SUMS
+        /usr/bin/sha256sum --strict --quiet -c SHA256SUMS
+    )
 
     # Full hybrid handshake followed by TLS 1.3 ticket resumption.  Both
     # component public values must be newly generated for the new ClientHello.
@@ -732,6 +794,7 @@ run_lane() {
         /usr/bin/sha256sum --strict --quiet -c PREUSE_SHA256SUMS
         /usr/bin/sha256sum \
             modules/x301.so \
+            modules-alias/x301.so \
             PREUSE_SHA256SUMS \
             hybrid-initial.msg \
             hybrid-resumed.msg \
@@ -751,6 +814,8 @@ run_lane() {
             r5-server-mlkem/SHA256SUMS \
             r6-foreign-size/foreign-size-client.log \
             r6-foreign-size/foreign-size-proxy.log >SHA256SUMS
+        /usr/bin/sha256sum \
+            d2-alias/RESULTS.tsv d2-alias/SHA256SUMS >>SHA256SUMS
     )
     if test "$LONG_HANDSHAKES" -gt 0; then
         (
@@ -767,7 +832,7 @@ run_lane() {
     printf '%s\n' \
         "PASS lane=$lane lane_evidence_sha256=$lane_evidence t8_hybrid=PASS r2_hrr=PASS r3_fragmentation=PASS" \
         'r4_fallback=PASS r4_no_common=PASS r5_client_mlkem=64/64 r5_client_x301=64/64' \
-        "r5_server_mlkem=64/64 r6_foreign_size=PASS r7_resumption=PASS r7_fresh_mlkem=PASS r7_fresh_x301=PASS l2_full_handshakes=$LONG_HANDSHAKES" \
+        "r5_server_mlkem=64/64 r6_foreign_size=PASS r7_resumption=PASS r7_fresh_mlkem=PASS r7_fresh_x301=PASS d2_aliases=7/7 l2_full_handshakes=$LONG_HANDSHAKES" \
         | tee "$build/STATUS.txt"
 }
 

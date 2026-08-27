@@ -2,9 +2,9 @@
 //!
 //! The construction follows the Montgomery ladder of RFC 7748 sections 4-6,
 //! translated by the X301 draft decisions D1-D4: the ED301 birational
-//! Montgomery form, strict canonical 38-byte decoding, cofactor-four scalar
-//! clamping, and mandatory all-zero rejection.  This module contains no KDF,
-//! RNG, key reuse, peer point validation, or independent field arithmetic.
+//! Montgomery form, RFC-7748-shaped 38-byte input decoding, cofactor-four
+//! scalar clamping, and mandatory all-zero rejection. This module contains no
+//! KDF, RNG, key reuse, peer point validation, or independent field arithmetic.
 
 use crypto_bigint::Choice;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -29,9 +29,9 @@ pub const X301_BYTES: usize = FIELD_BYTES;
 /// the 301-bit ED301 field by X301 decision D3.
 pub const SECRET_BYTES: usize = X301_BYTES;
 
-/// Exact byte length of a canonical X301 public coordinate.
+/// Exact byte length of an X301 public coordinate.
 ///
-/// Source: RFC 7748 section 5 and the strict X301 decision D2 encoding.
+/// Source: RFC 7748 section 5 and X301 decision D2.
 pub const PUBLIC_BYTES: usize = X301_BYTES;
 
 /// Exact byte length of a raw X301 shared secret.
@@ -66,7 +66,7 @@ const A24_MINUS: Fe301 = Fe301::from_canonical_words([
 const A24_DENOMINATOR: u32 = 2_086_388_028;
 const A24_NUMERATOR: u32 = 301;
 
-/// Failure from the strict X301 byte contract.
+/// Failure from the X301 byte contract.
 ///
 /// Source: RFC 7748 sections 5-6, narrowed by X301 decisions D2 and D4.  The
 /// enum deliberately has no secret-value rejection variant: every 38-byte
@@ -77,7 +77,7 @@ pub enum X301Error {
     InvalidSecretLength,
     /// The encoded peer coordinate is not exactly 38 bytes.
     InvalidPublicLength,
-    /// The coordinate is not the unique 38-byte encoding of a value below `p`.
+    /// Reserved for compatibility; exact-length inputs canonicalize under D2.
     NonCanonicalPublic,
     /// The completed ladder produced the all-zero shared secret.
     AllZeroSharedSecret,
@@ -109,15 +109,13 @@ impl SharedSecret {
     }
 }
 
-/// Apply the strict raw X301 function.
+/// Apply the raw X301 function.
 ///
 /// This is the RFC 7748 section 5 ladder with the D1 X301 parameters. `secret`
-/// is clamped according to D3. `u_bytes` is decoded strictly according to D2;
-/// unlike X25519, the three unused high bits are not masked and values at or
-/// above `p` are rejected. Every canonical input executes the same 301-bit
-/// schedule. The three clamped fixed bits retain their required doublings but
-/// omit work whose result is known in advance. D4 then rejects an all-zero
-/// result as required for TLS key exchange by RFC 9846 section 7.4.2.
+/// is clamped according to D3. D2 masks the three unused high bits and reduces
+/// the remaining 301-bit coordinate modulo `p`. Every exact-length input runs
+/// the same 301-bit schedule. D4 then rejects an all-zero result as required
+/// for TLS key exchange by RFC 9846 section 7.4.2.
 pub fn x301(secret_bytes: &[u8], u_bytes: &[u8]) -> Result<SharedSecret, X301Error> {
     let secret_bytes: &[u8; X301_BYTES] = secret_bytes
         .try_into()
@@ -154,22 +152,25 @@ pub fn shared_secret(secret: &[u8], peer_public: &[u8]) -> Result<SharedSecret, 
     x301(secret, peer_public)
 }
 
-/// Validate only the strict canonical encoding of an X301 public coordinate.
+/// Validate the length of an X301 public coordinate.
 ///
-/// Source: RFC 7748 section 5's little-endian field encoding, intentionally
-/// narrowed by D2.  Main-curve and twist coordinates are both accepted here;
-/// D4 low-order rejection occurs only after the complete ladder.
+/// D2 accepts every 38-byte input after masking and reduction. Main-curve and
+/// twist coordinates are both accepted here; D4 low-order rejection occurs
+/// only after the complete ladder.
 pub fn validate_public_encoding(public: &[u8]) -> Result<(), X301Error> {
     decode_public(public).map(|_| ())
+}
+
+#[cfg(test)]
+pub(crate) fn canonicalize_public_encoding(public: &[u8]) -> Result<[u8; PUBLIC_BYTES], X301Error> {
+    decode_public(public).map(Fe301::to_canonical_bytes)
 }
 
 fn decode_public(public: &[u8]) -> Result<Fe301, X301Error> {
     let bytes: &[u8; X301_BYTES] = public
         .try_into()
         .map_err(|_| X301Error::InvalidPublicLength)?;
-    Fe301::from_canonical_bytes(bytes)
-        .into_option_copied()
-        .ok_or(X301Error::NonCanonicalPublic)
+    Ok(Fe301::from_x301_bytes(bytes))
 }
 
 fn clamp_scalar(input: &[u8; X301_BYTES]) -> Secret<[u8; X301_BYTES]> {

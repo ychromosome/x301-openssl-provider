@@ -80,19 +80,16 @@ impl Fe301 {
     pub(crate) const ONE: Self = Self([1, 0, 0, 0, 0]);
 
     pub(crate) fn from_canonical_bytes(bytes: &[u8; FIELD_BYTES]) -> CtOption<Self> {
-        let mut limbs = [0_u64; LIMBS];
-        let mut index = 0;
-        while index < LIMBS - 1 {
-            let mut encoded = [0_u8; 8];
-            encoded.copy_from_slice(&bytes[index * 8..(index + 1) * 8]);
-            limbs[index] = u64::from_le_bytes(encoded);
-            index += 1;
-        }
-        let mut top = [0_u8; 8];
-        top[..FIELD_BYTES - 32].copy_from_slice(&bytes[32..]);
-        limbs[4] = u64::from_le_bytes(top);
+        let limbs = decode_limbs(bytes);
         let (_, borrow) = subtract_limbs_runtime(limbs, MODULUS);
         CtOption::new(Self(limbs), Choice::from_u8_lsb(borrow as u8))
+    }
+
+    #[cfg(feature = "x301")]
+    pub(crate) fn from_x301_bytes(bytes: &[u8; FIELD_BYTES]) -> Self {
+        let mut masked = *bytes;
+        masked[FIELD_BYTES - 1] &= 0x1f;
+        Self(conditional_subtract_modulus_ct(decode_limbs(&masked)))
     }
 
     pub(crate) const fn from_u64(value: u64) -> Self {
@@ -312,6 +309,21 @@ impl Fe301 {
         selected.ct_assign(&when_true.0, choice);
         Self(selected)
     }
+}
+
+fn decode_limbs(bytes: &[u8; FIELD_BYTES]) -> [u64; LIMBS] {
+    let mut limbs = [0_u64; LIMBS];
+    let mut index = 0;
+    while index < LIMBS - 1 {
+        let mut encoded = [0_u8; 8];
+        encoded.copy_from_slice(&bytes[index * 8..(index + 1) * 8]);
+        limbs[index] = u64::from_le_bytes(encoded);
+        index += 1;
+    }
+    let mut top = [0_u8; 8];
+    top[..FIELD_BYTES - 32].copy_from_slice(&bytes[32..]);
+    limbs[4] = u64::from_le_bytes(top);
+    limbs
 }
 
 impl Default for Fe301 {

@@ -37,6 +37,13 @@ static unsigned char fuzz_hybrid_public[HYBRID_PUBLIC_BYTES];
 static unsigned char fuzz_hybrid_ciphertext[HYBRID_CIPHERTEXT_BYTES];
 static unsigned char fuzz_x301_public[X301_BYTES];
 static const unsigned char empty_input[1] = { 0 };
+static const unsigned char field_modulus[X301_BYTES] = {
+    0xb3, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0x1f
+};
 
 static void invariant_failed(void)
 {
@@ -71,6 +78,33 @@ static void mutate_exact(
     for (index = 0; index < mutation_length; index++) {
         position = (index * 131U + mutation[index]) % output_length;
         output[position] ^= (unsigned char)(mutation[index] ^ index ^ 0x5bU);
+    }
+}
+
+static void canonicalize_public(
+    const unsigned char input[X301_BYTES],
+    unsigned char output[X301_BYTES])
+{
+    size_t index;
+    unsigned int borrow = 0;
+    int at_least_modulus = 1;
+
+    memcpy(output, input, X301_BYTES);
+    output[X301_BYTES - 1U] &= 0x1fU;
+    for (index = X301_BYTES; index > 0; index--) {
+        if (output[index - 1U] == field_modulus[index - 1U])
+            continue;
+        at_least_modulus = output[index - 1U] > field_modulus[index - 1U];
+        break;
+    }
+    if (!at_least_modulus)
+        return;
+    for (index = 0; index < X301_BYTES; index++) {
+        unsigned int subtrahend = field_modulus[index] + borrow;
+        unsigned int value = output[index];
+
+        output[index] = (unsigned char)(value - subtrahend);
+        borrow = value < subtrahend;
     }
 }
 
@@ -116,6 +150,7 @@ static void fuzz_hybrid_public_key(
     EVP_PKEY *duplicate = NULL;
     EVP_PKEY_CTX *check_context = NULL;
     unsigned char exact[HYBRID_PUBLIC_BYTES];
+    unsigned char expected[HYBRID_PUBLIC_BYTES];
     unsigned char *exported = NULL;
     const unsigned char *encoded = size == 0 ? empty_input : data;
     size_t encoded_length = size;
@@ -135,6 +170,14 @@ static void fuzz_hybrid_public_key(
     exported_length = EVP_PKEY_get1_encoded_public_key(key, &exported);
     if (exported_length != HYBRID_PUBLIC_BYTES || exported == NULL)
         invariant_failed();
+    if (encoded_length == HYBRID_PUBLIC_BYTES) {
+        memcpy(expected, encoded, sizeof(expected));
+        canonicalize_public(
+            encoded + HYBRID_PUBLIC_BYTES - X301_BYTES,
+            expected + HYBRID_PUBLIC_BYTES - X301_BYTES);
+        if (CRYPTO_memcmp(exported, expected, sizeof(expected)) != 0)
+            invariant_failed();
+    }
     duplicate = EVP_PKEY_dup(key);
     check_context = EVP_PKEY_CTX_new_from_pkey(
         fuzz_libctx, key, X301_PROPERTIES);
@@ -146,6 +189,7 @@ done:
     EVP_PKEY_free(duplicate);
     OPENSSL_free(exported);
     EVP_PKEY_free(key);
+    OPENSSL_cleanse(expected, sizeof(expected));
     OPENSSL_cleanse(exact, sizeof(exact));
 }
 
@@ -218,10 +262,13 @@ static void fuzz_x301_derive(
     EVP_PKEY *peer = NULL;
     EVP_PKEY_CTX *context = NULL;
     unsigned char exact[X301_BYTES];
+    unsigned char expected[X301_BYTES];
+    unsigned char exported[X301_BYTES];
     unsigned char output[X301_BYTES + 16U];
     const unsigned char *encoded = size == 0 ? empty_input : data;
     size_t encoded_length = size;
     size_t output_length;
+    size_t exported_length = sizeof(exported);
     size_t capacity;
     unsigned int control = size == 0 ? 0U : data[0];
     int result;
@@ -235,6 +282,13 @@ static void fuzz_x301_derive(
         fuzz_libctx, X301_NAME, X301_PROPERTIES, encoded, encoded_length);
     if (peer == NULL)
         goto done;
+    if (encoded_length == X301_BYTES) {
+        canonicalize_public(encoded, expected);
+        if (EVP_PKEY_get_raw_public_key(peer, exported, &exported_length) <= 0
+                || exported_length != sizeof(exported)
+                || CRYPTO_memcmp(exported, expected, sizeof(expected)) != 0)
+            invariant_failed();
+    }
     context = EVP_PKEY_CTX_new_from_pkey(
         fuzz_libctx, fuzz_x301_private, X301_PROPERTIES);
     if (context == NULL || EVP_PKEY_derive_init(context) <= 0
@@ -251,6 +305,8 @@ done:
     EVP_PKEY_CTX_free(context);
     EVP_PKEY_free(peer);
     OPENSSL_cleanse(output, sizeof(output));
+    OPENSSL_cleanse(exported, sizeof(exported));
+    OPENSSL_cleanse(expected, sizeof(expected));
     OPENSSL_cleanse(exact, sizeof(exact));
 }
 

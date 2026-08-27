@@ -19,7 +19,7 @@
     "q": 1018517988167243043134222844204689080525734197342817290458622896758534223469429834039334403,
     "q_twist": 1018517988167243043134222844204689080525734196323118960177517235683197019236556497968262103
   },
-  "schema": "x301-independent-reference-v1",
+  "schema": "x301-independent-reference-v2",
   "sources": [
     "RFC 7748 Sections 4-6",
     "inputs/round4/ED301-EdDSA-draft.md Sections 2-3",
@@ -62,34 +62,64 @@
   },
   "t3": [
     {
-      "expected_error": "noncanonical",
+      "expected_value_le38_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000",
       "id": "u-equals-p",
       "input_hex": "b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f"
     },
     {
-      "expected_error": "noncanonical",
+      "expected_value_le38_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000",
       "id": "u-equals-p-plus-one",
       "input_hex": "b40300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f"
     },
     {
-      "expected_error": "reserved_bits",
-      "id": "u-bit-301-set",
-      "input_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000020"
+      "expected_value_le38_hex": "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+      "id": "u-equals-p-minus-one",
+      "input_hex": "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f"
     },
     {
-      "expected_error": "reserved_bits",
-      "id": "u-bit-302-set",
-      "input_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000040"
+      "expected_value_le38_hex": "4cfcffffffffffffffffffff0700000000000000000000000000000000000000000000000000",
+      "id": "u-max-301-bit",
+      "input_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1f"
     },
     {
-      "expected_error": "reserved_bits",
-      "id": "u-bit-303-set",
-      "input_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000080"
+      "expected_value_le38_hex": "4bfcffffffffffffffffffff0700000000000000000000000000000000000000000000000000",
+      "id": "u-p-plus-max-alias-minus-one",
+      "input_hex": "feffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1f"
     },
     {
-      "expected_error": "reserved_bits",
-      "id": "u-bits-301-through-303-set",
-      "input_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000e0"
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-20",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546328"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-40",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546348"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-60",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546368"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-80",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546388"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-a0",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae95463a8"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-c0",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae95463c8"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-e0",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae95463e8"
     },
     {
       "expected_error": "length",

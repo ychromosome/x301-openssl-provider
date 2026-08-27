@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Extract the MLKEM1024X301 client KeyShare from OpenSSL ``-msg`` output.
+"""Extract an MLKEM1024X301 KeyShare from OpenSSL ``-msg`` output.
 
 Contract sources: RFC 9846 Section 4.3.8 defines the TLS 1.3 ClientHello
 KeyShare encoding and forbids reuse of a locally generated KeyShare; RFC 10024
@@ -91,6 +91,13 @@ def first_outgoing_client_hello(trace: str) -> bytes:
     return messages[0]
 
 
+def first_incoming_server_hello(trace: str) -> bytes:
+    messages = incoming_server_hellos(trace)
+    if not messages:
+        raise ParseError("no incoming ServerHello in OpenSSL -msg output")
+    return messages[0]
+
+
 def x301_hybrid_keyshare(client_hello: bytes) -> bytes:
     offset = 4
     _, offset = take(client_hello, offset, 2, "legacy_version")
@@ -137,17 +144,60 @@ def x301_hybrid_keyshare(client_hello: bytes) -> bytes:
     return matches[0]
 
 
+def x301_hybrid_server_keyshare(server_hello: bytes) -> bytes:
+    offset = 4
+    _, offset = take(server_hello, offset, 2, "legacy_version")
+    _, offset = take(server_hello, offset, 32, "random")
+    _, offset = take_vector(server_hello, offset, 1, "legacy_session_id_echo")
+    _, offset = take(server_hello, offset, 2, "cipher_suite")
+    _, offset = take(server_hello, offset, 1, "compression_method")
+    extensions, offset = take_vector(server_hello, offset, 2, "extensions")
+    if offset != len(server_hello):
+        raise ParseError("trailing bytes after ServerHello extensions")
+
+    matches: list[bytes] = []
+    ext_offset = 0
+    while ext_offset < len(extensions):
+        raw_type, ext_offset = take(extensions, ext_offset, 2, "extension type")
+        body, ext_offset = take_vector(extensions, ext_offset, 2, "extension body")
+        if int.from_bytes(raw_type, "big") != KEY_SHARE_EXTENSION:
+            continue
+        raw_group, body_offset = take(body, 0, 2, "NamedGroup")
+        key_exchange, body_offset = take_vector(
+            body, body_offset, 2, "KeyShareEntry.key_exchange"
+        )
+        if body_offset != len(body):
+            raise ParseError("trailing bytes after server KeyShareEntry")
+        if int.from_bytes(raw_group, "big") == GROUP_ID:
+            matches.append(key_exchange)
+    if len(matches) != 1:
+        raise ParseError(f"found {len(matches)} MLKEM1024X301 server KeyShare entries")
+    if len(matches[0]) != HYBRID_PUBLIC_BYTES:
+        raise ParseError(
+            f"MLKEM1024X301 server KeyShare is {len(matches[0])} bytes, "
+            f"expected {HYBRID_PUBLIC_BYTES}"
+        )
+    return matches[0]
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(f"usage: {Path(sys.argv[0]).name} OPENSSL-MSG-FILE", file=sys.stderr)
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] not in ("client", "server")):
+        print(
+            f"usage: {Path(sys.argv[0]).name} OPENSSL-MSG-FILE [client|server]",
+            file=sys.stderr,
+        )
         return 2
+    direction = sys.argv[2] if len(sys.argv) == 3 else "client"
     try:
         trace = Path(sys.argv[1]).read_text(encoding="ascii")
-        key_share = x301_hybrid_keyshare(first_outgoing_client_hello(trace))
+        if direction == "client":
+            key_share = x301_hybrid_keyshare(first_outgoing_client_hello(trace))
+        else:
+            key_share = x301_hybrid_server_keyshare(first_incoming_server_hello(trace))
     except (OSError, UnicodeError, ParseError) as error:
         print(f"keyshare parse failed: {error}", file=sys.stderr)
         return 1
@@ -155,9 +205,10 @@ def main() -> int:
     mlkem = key_share[:MLKEM_PUBLIC_BYTES]
     x301 = key_share[MLKEM_PUBLIC_BYTES:]
     print(
-        f"group=0x{GROUP_ID:04x} length={len(key_share)} "
+        f"direction={direction} group=0x{GROUP_ID:04x} length={len(key_share)} "
         f"mlkem_length={len(mlkem)} mlkem_sha256={digest(mlkem)} "
-        f"x301_length={len(x301)} x301_sha256={digest(x301)}"
+        f"x301_length={len(x301)} x301_unused_bits=0x{x301[-1] & 0xe0:02x} "
+        f"x301_sha256={digest(x301)}"
     )
     return 0
 

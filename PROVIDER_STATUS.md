@@ -17,7 +17,8 @@ and 4.0.1.
 - key generation uses `RAND_priv_bytes_ex()` in the provider child context;
 - public generation uses the existing constant-time Ed301 fixed-base path;
 - derive always uses the same fixed-schedule Montgomery ladder;
-- peer encodings must be canonical and all-zero results are rejected; and
+- peer encodings follow X-D2 masking and reduction; exported keys are
+  canonical and all-zero results are rejected; and
 - Ed301 and X301 key objects are not interchangeable.
 
 ## MLKEM1024X301

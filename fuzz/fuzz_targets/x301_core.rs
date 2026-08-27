@@ -13,12 +13,15 @@ const MODULUS: [u8; X301_BYTES] = [
 ];
 
 fuzz_target!(|data: &[u8]| {
-    let encoding_is_valid = validate_public_encoding(data).is_ok();
-    assert_eq!(
-        encoding_is_valid,
-        canonical_field_encoding(data),
-        "strict decoder and independent integer comparison disagree"
-    );
+    assert_eq!(validate_public_encoding(data).is_ok(), data.len() == X301_BYTES);
+
+    if let Some(expected) = canonicalize_oracle(data) {
+        match (shared_secret(data, data), shared_secret(data, &expected)) {
+            (Ok(left), Ok(right)) => assert_eq!(left.as_bytes(), right.as_bytes()),
+            (Err(left), Err(right)) => assert_eq!(left, right),
+            _ => panic!("alias and canonical coordinate disagree"),
+        }
+    }
 
     let _ = public_from_secret(data);
     let _ = shared_secret(data, data);
@@ -51,14 +54,31 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(public_a, alias_public);
 });
 
-fn canonical_field_encoding(value: &[u8]) -> bool {
+fn canonicalize_oracle(value: &[u8]) -> Option<[u8; X301_BYTES]> {
     let Ok(value) = <&[u8; X301_BYTES]>::try_from(value) else {
-        return false;
+        return None;
     };
-    for index in (0..X301_BYTES).rev() {
-        if value[index] != MODULUS[index] {
-            return value[index] < MODULUS[index];
-        }
+
+    let mut output = *value;
+    output[X301_BYTES - 1] &= 0x1f;
+    if output
+        .iter()
+        .rev()
+        .cmp(MODULUS.iter().rev())
+        .is_lt()
+    {
+        return Some(output);
     }
-    false
+
+    let mut borrow = 0_u16;
+    for (byte, modulus) in output.iter_mut().zip(MODULUS) {
+        let right = u16::from(modulus) + borrow;
+        let left = u16::from(*byte);
+        *byte = left.wrapping_sub(right) as u8;
+        borrow = u16::from(left < right);
+    }
+    if borrow != 0 {
+        return None;
+    }
+    Some(output)
 }

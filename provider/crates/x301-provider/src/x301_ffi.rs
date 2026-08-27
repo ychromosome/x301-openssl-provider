@@ -14,6 +14,12 @@ use ed301_eddsa::x301::{
 };
 use zeroize::Zeroize;
 
+const FIELD_MODULUS: [u8; PUBLIC_BYTES] = [
+    0xb3, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0x1f,
+];
+
 /// Function table consumed by the C provider shim.
 #[repr(C)]
 pub(crate) struct X301RustApi {
@@ -129,6 +135,21 @@ fn hit_alloc_failpoint(_name: &str) -> bool {
     false
 }
 
+#[cfg(feature = "test-failpoint")]
+fn public_alias_mask() -> u8 {
+    std::env::var("X301_PROVIDER_PUBLIC_ALIAS_MASK")
+        .ok()
+        .and_then(|value| u8::from_str_radix(&value, 16).ok())
+        .filter(|mask| *mask != 0 && (*mask & 0x1f) == 0)
+        .unwrap_or(0)
+}
+
+#[cfg(not(feature = "test-failpoint"))]
+#[inline(always)]
+fn public_alias_mask() -> u8 {
+    0
+}
+
 fn try_box<T>(value: T) -> Option<Box<T>> {
     let layout = std::alloc::Layout::new::<T>();
     if layout.size() == 0 {
@@ -201,7 +222,7 @@ unsafe extern "C" fn key_import(
             return 0;
         };
         // SAFETY: Same contract as the private input.
-        let Some(raw_public) = (unsafe { read_optional_exact(public, public_len) }) else {
+        let Some(raw_public) = (unsafe { read_optional_public(public, public_len) }) else {
             return 0;
         };
         if raw_private.is_none() && raw_public.is_none() {
@@ -216,9 +237,6 @@ unsafe extern "C" fn key_import(
             None => None,
         };
         if let Some(public) = raw_public.as_ref() {
-            if validate_public_encoding(public).is_err() {
-                return 0;
-            }
             if let Some(derived) = derived_public.as_ref()
                 && !bytes_equal(derived, public)
             {
@@ -247,12 +265,9 @@ unsafe extern "C" fn key_set_encoded_public(
             return 0;
         };
         // SAFETY: The C buffer remains readable for this call.
-        let Some(Some(public)) = (unsafe { read_optional_exact(public, public_len) }) else {
+        let Some(Some(public)) = (unsafe { read_optional_public(public, public_len) }) else {
             return 0;
         };
-        if validate_public_encoding(&public).is_err() {
-            return 0;
-        }
         if let Some(private) = key.private.as_ref() {
             let Ok(derived) = public_from_secret(&private.0) else {
                 return 0;
@@ -441,8 +456,10 @@ unsafe extern "C" fn key_get_public(
         let Some(public) = key.public.as_ref() else {
             return 0;
         };
+        let mut encoded = *public;
+        encoded[PUBLIC_BYTES - 1] |= public_alias_mask();
         // SAFETY: C supplies `output_len` writable bytes.
-        i32::from(unsafe { write_exact(output, output_len, public) })
+        i32::from(unsafe { write_exact(output, output_len, &encoded) })
     })
 }
 
@@ -557,7 +574,21 @@ fn bytes_equal<const N: usize>(left: &[u8; N], right: &[u8; N]) -> bool {
     left.ct_eq(right).to_bool()
 }
 
-unsafe fn read_optional_exact(
+fn canonicalize_public_bytes(mut encoded: [u8; PUBLIC_BYTES]) -> [u8; PUBLIC_BYTES] {
+    encoded[PUBLIC_BYTES - 1] &= 0x1f;
+
+    let mut reduced = [0_u8; PUBLIC_BYTES];
+    let mut borrow = 0_u16;
+    for index in 0..PUBLIC_BYTES {
+        let left = u16::from(encoded[index]);
+        let right = u16::from(FIELD_MODULUS[index]) + borrow;
+        reduced[index] = left.wrapping_sub(right) as u8;
+        borrow = u16::from(left < right);
+    }
+    if borrow == 0 { reduced } else { encoded }
+}
+
+unsafe fn read_optional_public(
     input: *const u8,
     input_len: usize,
 ) -> Option<Option<[u8; PUBLIC_BYTES]>> {
@@ -567,10 +598,10 @@ unsafe fn read_optional_exact(
     if input.is_null() || input_len != PUBLIC_BYTES {
         return None;
     }
-    let mut output = [0_u8; PUBLIC_BYTES];
+    let mut encoded = [0_u8; PUBLIC_BYTES];
     // SAFETY: The caller guarantees `input_len` readable bytes.
-    unsafe { core::ptr::copy_nonoverlapping(input, output.as_mut_ptr(), PUBLIC_BYTES) };
-    Some(Some(output))
+    unsafe { core::ptr::copy_nonoverlapping(input, encoded.as_mut_ptr(), PUBLIC_BYTES) };
+    Some(Some(canonicalize_public_bytes(encoded)))
 }
 
 unsafe fn read_optional_secret(input: *const u8, input_len: usize) -> Option<Option<SecretBytes>> {

@@ -4,7 +4,7 @@
  * X301 EVP KEYMGMT/KEYEXCH and RAND-separation contract tests (T6/T7).
  *
  * Contract sources:
- *   - docs/X301_DRAFT.md sections 7 and 12 (38-byte strict keys, XDH);
+ *   - docs/X301_DRAFT.md sections 7 and 12 (38-byte X301 inputs, XDH);
  *   - RFC 7748 sections 5-6 (raw XDH/derive API pattern);
  *   - OpenSSL provider-keymgmt(7), provider-keyexch(7), RAND_priv_bytes_ex(3);
  *   - OpenSSL ECX key-management tests for raw-key and RAND policy shape.
@@ -22,6 +22,7 @@
 
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
+#include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/params.h>
@@ -77,6 +78,13 @@ static const unsigned char SHARED_AA[X301_BYTES] = {
     0xe5, 0x1e, 0x9d, 0x40, 0xbf, 0xef, 0xdb, 0xdd,
     0x3b, 0xd1, 0x00, 0xb5, 0xdf, 0xdc, 0xb8, 0x50,
     0xaf, 0x1d, 0xb8, 0xa7, 0x2a, 0x1e
+};
+static const unsigned char FIELD_MODULUS[X301_BYTES] = {
+    0xb3, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0x1f
 };
 
 /*
@@ -145,6 +153,47 @@ static int buffer_is(const unsigned char *buffer, size_t length, unsigned char v
             return 0;
     }
     return 1;
+}
+
+static void canonicalize_public_oracle(
+    const unsigned char input[X301_BYTES],
+    unsigned char output[X301_BYTES])
+{
+    size_t index;
+    unsigned int borrow = 0;
+    int at_least_modulus = 1;
+
+    memcpy(output, input, X301_BYTES);
+    output[X301_BYTES - 1U] &= 0x1fU;
+    for (index = X301_BYTES; index > 0; index--) {
+        if (output[index - 1U] == FIELD_MODULUS[index - 1U])
+            continue;
+        at_least_modulus = output[index - 1U] > FIELD_MODULUS[index - 1U];
+        break;
+    }
+    if (!at_least_modulus)
+        return;
+    for (index = 0; index < X301_BYTES; index++) {
+        unsigned int subtrahend = FIELD_MODULUS[index] + borrow;
+        unsigned int value = output[index];
+
+        output[index] = (unsigned char)(value - subtrahend);
+        borrow = value < subtrahend;
+    }
+}
+
+static int public_encoding_is_canonical(
+    const unsigned char public_bytes[X301_BYTES])
+{
+    size_t index;
+
+    if ((public_bytes[X301_BYTES - 1U] & 0xe0U) != 0)
+        return 0;
+    for (index = X301_BYTES; index > 0; index--) {
+        if (public_bytes[index - 1U] != FIELD_MODULUS[index - 1U])
+            return public_bytes[index - 1U] < FIELD_MODULUS[index - 1U];
+    }
+    return 0;
 }
 
 static int hex_decode(
@@ -396,6 +445,41 @@ static EVP_PKEY *raw_public(
 {
     return EVP_PKEY_new_raw_public_key_ex(
         libctx, X301_NAME, X301_PROPERTIES, bytes, length);
+}
+
+static EVP_PKEY *keypair_fromdata(
+    OSSL_LIB_CTX *libctx,
+    const unsigned char secret[X301_BYTES],
+    const unsigned char public_bytes[X301_BYTES])
+{
+    EVP_PKEY_CTX *context = EVP_PKEY_CTX_new_from_name(
+        libctx, X301_NAME, X301_PROPERTIES);
+    EVP_PKEY *key = NULL;
+    OSSL_PARAM params[3];
+
+    params[0] = OSSL_PARAM_construct_octet_string(
+        OSSL_PKEY_PARAM_PRIV_KEY, (void *)secret, X301_BYTES);
+    params[1] = OSSL_PARAM_construct_octet_string(
+        OSSL_PKEY_PARAM_PUB_KEY, (void *)public_bytes, X301_BYTES);
+    params[2] = OSSL_PARAM_construct_end();
+    if (context == NULL || EVP_PKEY_fromdata_init(context) <= 0
+            || EVP_PKEY_fromdata(
+                context, &key, EVP_PKEY_KEYPAIR, params) <= 0) {
+        EVP_PKEY_free(key);
+        key = NULL;
+    }
+    EVP_PKEY_CTX_free(context);
+    return key;
+}
+
+static int export_raw_public_exact(
+    EVP_PKEY *key,
+    unsigned char output[X301_BYTES])
+{
+    size_t length = X301_BYTES;
+
+    return EVP_PKEY_get_raw_public_key(key, output, &length) > 0
+        && length == X301_BYTES;
 }
 
 static int raw_roundtrip(
@@ -816,6 +900,125 @@ static int all_small_order_peers_rejected(
     return 1;
 }
 
+static int alias_inputs_canonicalize_before_keymgmt_and_derive(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *private_a,
+    EVP_PKEY *canonical_public_a,
+    EVP_PKEY *canonical_public_b)
+{
+    EVP_PKEY *alias_key = NULL;
+    EVP_PKEY *canonical_key = NULL;
+    EVP_PKEY *duplicate = NULL;
+    EVP_PKEY *keypair = NULL;
+    unsigned char alias[X301_BYTES];
+    unsigned char expected[X301_BYTES];
+    unsigned char exported[X301_BYTES];
+    unsigned char alias_secret[X301_BYTES];
+    unsigned char canonical_secret[X301_BYTES];
+    unsigned int mask;
+    int result = 0;
+
+    for (mask = 0x20U; mask <= 0xe0U; mask += 0x20U) {
+        memcpy(alias, PUBLIC_B, sizeof(alias));
+        alias[X301_BYTES - 1U] |= (unsigned char)mask;
+        alias_key = raw_public(libctx, alias, sizeof(alias));
+        if (alias_key == NULL
+                || !export_raw_public_exact(alias_key, exported)
+                || CRYPTO_memcmp(exported, PUBLIC_B, X301_BYTES) != 0
+                || EVP_PKEY_eq(alias_key, canonical_public_b) != 1
+                || !derive_exact(libctx, private_a, alias_key, alias_secret)
+                || CRYPTO_memcmp(alias_secret, SHARED_AB, X301_BYTES) != 0)
+            goto done;
+        if (mask == 0x20U) {
+            duplicate = EVP_PKEY_dup(alias_key);
+            if (duplicate == NULL
+                    || !export_raw_public_exact(duplicate, exported)
+                    || CRYPTO_memcmp(exported, PUBLIC_B, X301_BYTES) != 0
+                    || EVP_PKEY_set1_encoded_public_key(
+                        duplicate, alias, sizeof(alias)) <= 0)
+                goto done;
+        }
+        EVP_PKEY_free(alias_key);
+        alias_key = NULL;
+    }
+
+    memcpy(alias, PUBLIC_A, sizeof(alias));
+    alias[X301_BYTES - 1U] |= 0xe0U;
+    keypair = keypair_fromdata(libctx, SECRET_A, alias);
+    if (keypair == NULL || EVP_PKEY_eq(keypair, canonical_public_a) != 1
+            || !export_raw_public_exact(keypair, exported)
+            || CRYPTO_memcmp(exported, PUBLIC_A, X301_BYTES) != 0)
+        goto done;
+
+    memset(expected, 0, sizeof(expected));
+    alias_key = raw_public(libctx, FIELD_MODULUS, X301_BYTES);
+    if (alias_key == NULL || !export_raw_public_exact(alias_key, exported)
+            || CRYPTO_memcmp(exported, expected, X301_BYTES) != 0
+            || !small_order_derive_rejects_atomically(
+                libctx, private_a, alias_key, 1))
+        goto done;
+    EVP_PKEY_free(alias_key);
+    alias_key = NULL;
+
+    memcpy(alias, FIELD_MODULUS, sizeof(alias));
+    alias[0] += 1U;
+    memset(expected, 0, sizeof(expected));
+    expected[0] = 1U;
+    alias_key = raw_public(libctx, alias, sizeof(alias));
+    if (alias_key == NULL || !export_raw_public_exact(alias_key, exported)
+            || CRYPTO_memcmp(exported, expected, X301_BYTES) != 0
+            || !small_order_derive_rejects_atomically(
+                libctx, private_a, alias_key, 1))
+        goto done;
+    EVP_PKEY_free(alias_key);
+    alias_key = NULL;
+
+    memcpy(alias, FIELD_MODULUS, sizeof(alias));
+    alias[0] += 2U;
+    memset(expected, 0, sizeof(expected));
+    expected[0] = 2U;
+    alias_key = raw_public(libctx, alias, sizeof(alias));
+    canonical_key = raw_public(libctx, expected, sizeof(expected));
+    if (alias_key == NULL || canonical_key == NULL
+            || EVP_PKEY_eq(alias_key, canonical_key) != 1
+            || !derive_exact(libctx, private_a, alias_key, alias_secret)
+            || !derive_exact(
+                libctx, private_a, canonical_key, canonical_secret)
+            || CRYPTO_memcmp(
+                alias_secret, canonical_secret, X301_BYTES) != 0)
+        goto done;
+    EVP_PKEY_free(alias_key);
+    EVP_PKEY_free(canonical_key);
+    alias_key = NULL;
+    canonical_key = NULL;
+
+    memset(alias, 0xff, sizeof(alias));
+    alias[X301_BYTES - 1U] = 0x1fU;
+    canonicalize_public_oracle(alias, expected);
+    alias_key = raw_public(libctx, alias, sizeof(alias));
+    canonical_key = raw_public(libctx, expected, sizeof(expected));
+    if (alias_key == NULL || canonical_key == NULL
+            || EVP_PKEY_eq(alias_key, canonical_key) != 1
+            || !derive_exact(libctx, private_a, alias_key, alias_secret)
+            || !derive_exact(
+                libctx, private_a, canonical_key, canonical_secret)
+            || CRYPTO_memcmp(
+                alias_secret, canonical_secret, X301_BYTES) != 0)
+        goto done;
+
+    result = 1;
+
+done:
+    ERR_clear_error();
+    OPENSSL_cleanse(alias_secret, sizeof(alias_secret));
+    OPENSSL_cleanse(canonical_secret, sizeof(canonical_secret));
+    EVP_PKEY_free(keypair);
+    EVP_PKEY_free(duplicate);
+    EVP_PKEY_free(canonical_key);
+    EVP_PKEY_free(alias_key);
+    return result;
+}
+
 static int adversarial_corpus_matches(OSSL_LIB_CTX *libctx)
 {
     unsigned char secret[2U * X301_BYTES];
@@ -877,9 +1080,7 @@ static int adversarial_corpus_matches(OSSL_LIB_CTX *libctx)
                         libctx, private_key, peer, 1);
             } else {
                 case_ok = peer == NULL
-                    && (strcmp(vector->expected_error, "length") == 0
-                        || strcmp(vector->expected_error, "noncanonical") == 0
-                        || strcmp(vector->expected_error, "reserved_bits") == 0);
+                    && strcmp(vector->expected_error, "length") == 0;
             }
         }
 
@@ -1432,12 +1633,20 @@ int main(int argc, char **argv)
     }
     pass("T6 KEYMGMT match identifies equal and unequal keys");
 
+    if (!alias_inputs_canonicalize_before_keymgmt_and_derive(
+            libctx, private_a, public_a, public_b)) {
+        fail("D2 public aliases canonicalize before KEYMGMT and KEYEXCH");
+        goto done;
+    }
+    pass("D2 public aliases canonicalize before KEYMGMT and KEYEXCH");
+
     calls_before = rand_generate_calls;
     generated = keygen(libctx);
     if (generated == NULL
             || rand_generate_calls != calls_before + 1U
             || !raw_roundtrip(generated, generated,
-                TEST_RAND_SEED, TEST_RAND_PUBLIC)) {
+                TEST_RAND_SEED, TEST_RAND_PUBLIC)
+            || !public_encoding_is_canonical(TEST_RAND_PUBLIC)) {
         fail("T7 deterministic application RAND fixes seed and public key");
         goto done;
     }

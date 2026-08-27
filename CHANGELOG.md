@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Changed X301 peer decoding to require 38 bytes, ignore bits 301-303 and
+  subtract `p` once when needed. Imports store and export the canonical value;
+  the post-ladder all-zero rejection is unchanged.
 - Reopened the X301 candidate after hostile review. Published the complete
   retained curve-search package, renamed the ML-KEM-first group to
   `MLKEM1024X301`, made the official runners portable, removed the automatic
@@ -30,7 +33,7 @@
   MLKEM1024X301 while retaining the normative drafts, implementation registers
   and evidence.
 - Added the optional, safe-Rust X301 core by reusing the existing 5x64 field,
-  with strict 38-byte u encodings, cofactor-4 clamping, mandatory all-zero
+  with 38-byte u encodings, cofactor-4 clamping, mandatory all-zero
   rejection, an independent Python oracle and RFC-7748-shaped KAT, iteration,
   boundary, small-order and 10,000-case differential tests. Added a distinct
   OpenSSL KEYMGMT/KEYEXCH and the private-use `MLKEM1024X301` TLS group: ML-KEM-
@@ -38,7 +41,7 @@
   ML-KEM first without a project KDF, and no standalone hybrid profile is
   defined. Dual OpenSSL 3.5.7/4.0.1 provider, TLS, lifecycle, failure, taint and
   code-generation gates bind the experimental integration.
-- Added the extended X301 assurance lane: a frozen 559-case
+- Added the extended X301 assurance lane: a frozen 560-case
   Wycheproof-taxonomy corpus, native OpenSSL `evp_test` data, 1,000-case
   deterministic properties, complete KEYEXCH state/failpoint tests,
   bidirectional 3.5.7/4.0.1 TLS interoperation, HRR and fragmentation,

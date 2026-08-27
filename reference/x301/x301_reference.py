@@ -272,11 +272,11 @@ class EvidenceError(RuntimeError):
 def decode_u(encoded: bytes) -> int:
     if not isinstance(encoded, bytes) or len(encoded) != FIELD_BYTES:
         raise X301Error("length")
-    if encoded[-1] & 0xE0:
-        raise X301Error("reserved_bits")
-    value = int.from_bytes(encoded, "little")
+    masked = bytearray(encoded)
+    masked[-1] &= 0x1F
+    value = int.from_bytes(masked, "little")
     if value >= P:
-        raise X301Error("noncanonical")
+        value -= P
     return value
 
 
@@ -620,31 +620,34 @@ def kat_vectors() -> list[dict[str, str]]:
 
 
 def boundary_vectors() -> list[dict[str, object]]:
-    p_bytes = P.to_bytes(FIELD_BYTES, "little")
-    p_plus_one = (P + 1).to_bytes(FIELD_BYTES, "little")
-    vectors: list[dict[str, object]] = [
-        {"id": "u-equals-p", "input_hex": p_bytes.hex(), "expected_error": "noncanonical"},
-        {"id": "u-equals-p-plus-one", "input_hex": p_plus_one.hex(), "expected_error": "noncanonical"},
+    max_alias = 2**301 - 1 - P
+
+    def accepted(vector_id: str, encoded: bytes, value: int) -> dict[str, object]:
+        return {
+            "id": vector_id,
+            "input_hex": encoded.hex(),
+            "expected_value_le38_hex": encode_u(value).hex(),
+        }
+
+    vectors = [
+        accepted("u-equals-p", P.to_bytes(FIELD_BYTES, "little"), 0),
+        accepted("u-equals-p-plus-one", (P + 1).to_bytes(FIELD_BYTES, "little"), 1),
+        accepted("u-equals-p-minus-one", (P - 1).to_bytes(FIELD_BYTES, "little"), P - 1),
+        accepted("u-max-301-bit", (2**301 - 1).to_bytes(FIELD_BYTES, "little"), max_alias),
+        accepted(
+            "u-p-plus-max-alias-minus-one",
+            (P + max_alias - 1).to_bytes(FIELD_BYTES, "little"),
+            max_alias - 1,
+        ),
     ]
-    for bit in (301, 302, 303):
-        encoded = bytearray(FIELD_BYTES)
-        encoded[bit // 8] = 1 << (bit % 8)
+    for mask in range(0x20, 0x100, 0x20):
+        encoded = bytearray(BASE_U_ENCODING)
+        encoded[-1] |= mask
         vectors.append(
-            {
-                "id": f"u-bit-{bit}-set",
-                "input_hex": bytes(encoded).hex(),
-                "expected_error": "reserved_bits",
-            }
+            accepted(f"u-high-mask-{mask:02x}", bytes(encoded), int.from_bytes(BASE_U_ENCODING, "little"))
         )
-    encoded = bytearray(FIELD_BYTES)
-    encoded[-1] = 0xE0
     vectors.extend(
         [
-            {
-                "id": "u-bits-301-through-303-set",
-                "input_hex": bytes(encoded).hex(),
-                "expected_error": "reserved_bits",
-            },
             {"id": "u-length-37", "input_hex": bytes(FIELD_BYTES - 1).hex(), "expected_error": "length"},
             {"id": "u-length-39", "input_hex": bytes(FIELD_BYTES + 1).hex(), "expected_error": "length"},
         ]
@@ -655,7 +658,7 @@ def boundary_vectors() -> list[dict[str, object]]:
 def computed_vector_document(corpus_count: int = 10_000) -> dict[str, object]:
     digest, first, last = corpus_summary(corpus_count)
     return {
-        "schema": "x301-independent-reference-v1",
+        "schema": "x301-independent-reference-v2",
         "warning": "variable-time test oracle; never use with production secrets",
         "sources": [
             "RFC 7748 Sections 4-6",
@@ -702,7 +705,7 @@ def validate_vector_document(document: object, verify_corpus: bool = True) -> No
     validate_parameters()
     if not isinstance(document, dict):
         raise EvidenceError("vector document is not an object")
-    if document.get("schema") != "x301-independent-reference-v1":
+    if document.get("schema") != "x301-independent-reference-v2":
         raise EvidenceError("vector schema mismatch")
     expected_parameters = {
         "p": P,

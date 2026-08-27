@@ -170,22 +170,17 @@ claim that the selected historical evidence has been independently rerun here.
 
 ## 5. X301 byte and scalar contract
 
-### 5.1 D2: strict u encoding
+### 5.1 D2: u input decoding
 
-An X301 u-coordinate is exactly 38 octets, little-endian. This profile chooses
-strict canonical decoding:
+An external X301 u-coordinate MUST contain exactly 38 little-endian octets.
+The decoder MUST clear bits 301-303, interpret the remaining 301 bits as an
+integer, and subtract `p` once if the integer is at least `p`. Since the masked
+integer is below `2^301 < 2p`, no further reduction is needed. Internal and
+exported coordinates MUST use the resulting encoding in `[0,p)`.
 
-- lengths other than 38 MUST fail;
-- bits 301, 302 and 303 MUST each be zero;
-- the decoded integer MUST be less than `p`;
-- input MUST NOT be masked or reduced modulo `p`;
-- output is the unique 38-byte encoding of an integer in `[0,p)`.
-
-Thus `u=p`, `u=p+1`, every reserved-bit case and lengths 37/39 fail at decode.
-This deliberately differs from X25519's tolerant RFC 7748 decoder. The reason
-is the existing ED301 canonical-encoding discipline and the smaller attack
-surface of one representation per value; the departure is registered as
-`X-D2`.
+This acceptance rule follows the RFC 7748 decoding shape but does not make
+X301 RFC-7748 conformant. The all-zero check remains after scalar
+multiplication; an input that reduces to zero is not rejected during decode.
 
 ### 5.2 D3: clamping
 
@@ -408,7 +403,7 @@ variable-time oracle. It imports neither Rust/product code nor provider output.
   through complete Edwards scalar multiplication, and exact clamped bytes;
 - T2 results after 1 and 1,000 RFC-shaped iterations, plus the separately
   gated L1 result after 1,000,000 iterations;
-- separate T3 strict-canonical boundary cases;
+- T3 alias, reduction and wrong-length boundary cases;
 - the independently derived complete T4 affine x-line corpus;
 - the SHA-256, first record and last record of a canonical 10,000-case T5
   scalar/basepoint/DH stream.
@@ -434,7 +429,7 @@ a standards-conformance claim:
 | D1 | algebra, exceptional points, 256 deterministic round trips/homomorphisms | PASS in the independent Python oracle |
 | T1 | fixed scalar/u/basepoint KATs and random DH agreement | PASS: four fixed KATs and the T5 DH stream |
 | T2 | frozen results after 1 and 1,000 iterations | PASS byte-for-byte in Python and Rust |
-| T3 | `p`, `p+1`, bits 301-303, length 37/39 | PASS in Python, Rust and EVP boundaries |
+| T3 | `p-1`, `p`, `p+1`, the 301-bit maximum, all seven high-bit aliases, length 37/39 | PASS in Python, Rust and EVP boundaries |
 | T4 | all main/twist order-1/2/4 x-lines and rejection | PASS: independently derived `u=0,1,p-1`; direct EVP rejects all three in both KAT directions |
 | T5 | at least 10,000 independent differential cases | PASS; canonical digest `257711151f37d9011cbf42123901ae914b77e461db7edb80ee85405e4b97d076` |
 | T6 | KEYEXCH/KEYMGMT EVP matrix in 3.5.7 and 4.0.1 | Historical pre-repair PASS; final read-only archive rerun required |
@@ -455,7 +450,7 @@ each harness.  It adds no production dependency and no `unsafe` block.
 
 | Family | Frozen or executable coverage | Retained evidence / required gate |
 | --- | --- | --- |
-| W1-W6 | 47 semantic cases plus 512 deterministic oracle-generated valid cases; generated JSON and C header reproduce byte-for-byte | Core/oracle gate required; provider results are historical until the final rerun |
+| W1-W6 | 48 semantic cases plus 512 deterministic oracle-generated valid cases; generated JSON and C header reproduce byte-for-byte | Core/oracle gate required; provider results are historical until the final rerun |
 | O1-O2 | OpenSSL `evp_test`-format KAT, pairwise, missing-peer and wrong-peer cases | Final dual-lane rerun required |
 | P1-P4 | 1,000 deterministic commutativity, birational, clamping and canonical-encoding cases | Final core and dual-lane rerun required |
 | M1-M6 | peer replacement, repeat derive, `dupctx`, re-init/key replacement, four-thread sharing and allocation/panic failure injection | Final dual-lane and Valgrind rerun required |

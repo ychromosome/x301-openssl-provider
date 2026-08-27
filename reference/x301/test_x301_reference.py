@@ -69,13 +69,18 @@ class X301ReferenceTests(unittest.TestCase):
                 )
                 self.assertEqual(ref.x301(secret, encoded_u).hex(), vector["result_le38_hex"])
 
-    def test_d2_strict_boundaries(self) -> None:
+    def test_d2_alias_and_length_boundaries(self) -> None:
         self.assertEqual(ref.boundary_vectors(), self.vectors["t3"])
         for vector in self.vectors["t3"]:
             with self.subTest(vector=vector["id"]):
-                with self.assertRaises(ref.X301Error) as caught:
-                    ref.decode_u(bytes.fromhex(vector["input_hex"]))
-                self.assertEqual(caught.exception.code, vector["expected_error"])
+                encoded = bytes.fromhex(vector["input_hex"])
+                if "expected_error" in vector:
+                    with self.assertRaises(ref.X301Error) as caught:
+                        ref.decode_u(encoded)
+                    self.assertEqual(caught.exception.code, vector["expected_error"])
+                else:
+                    expected = bytes.fromhex(vector["expected_value_le38_hex"])
+                    self.assertEqual(ref.encode_u(ref.decode_u(encoded)), expected)
 
     def test_d3_exact_clamp_bits(self) -> None:
         raw = bytes(range(ref.FIELD_BYTES))

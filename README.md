@@ -30,7 +30,8 @@ implementation. See `STATUS.md` for the remaining gates.
 - X301 uses the existing safe-Rust 5x64 ED301 field backend.
 - X301 public keys and shared secrets are 38-byte little-endian u-coordinates.
 - Key generation uses OpenSSL's application-linked private RAND path.
-- Derivation rejects non-canonical peer keys and an all-zero shared secret.
+- Peer inputs are masked and reduced under X-D2; derivation rejects an
+  all-zero shared secret.
 - Every derive uses the same RFC-7748-shaped ladder; there is no implicit
   repeated-peer accelerator.
 - MLKEM1024X301 obtains ML-KEM-1024 through EVP using the child library

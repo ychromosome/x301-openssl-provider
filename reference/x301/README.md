@@ -16,7 +16,7 @@ The oracle has six deliberately separate jobs:
 3. T2 applies the RFC 7748 iteration-test state update and freezes the results
    after one and 1,000 iterations. L1 keeps the one-million result in the
    separate `x301-long-iteration.json` fixture so ordinary tests stay bounded.
-4. T3 separates strict noncanonical, reserved-bit and wrong-length failures.
+4. T3 covers high-bit aliases, one-subtraction reduction and wrong lengths.
 5. T4 derives all rational order-2 and order-4 x-lines algebraically and
    classifies the order-4 lines between the main curve and the twist by their
    quadratic characters. The identity has no affine u encoding.

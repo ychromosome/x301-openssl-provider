@@ -44,6 +44,13 @@
 static unsigned int checks;
 static unsigned long allocation_countdown;
 static unsigned long allocation_total;
+static const unsigned char FIELD_MODULUS[X301_BYTES] = {
+    0xb3, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0x1f
+};
 
 static void *counting_malloc(size_t size, const char *file, int line)
 {
@@ -85,6 +92,47 @@ static int buffer_is(const unsigned char *buffer, size_t length, unsigned char v
             return 0;
     }
     return 1;
+}
+
+static void canonicalize_x301_oracle(
+    const unsigned char input[X301_BYTES],
+    unsigned char output[X301_BYTES])
+{
+    size_t index;
+    unsigned int borrow = 0;
+    int at_least_modulus = 1;
+
+    memcpy(output, input, X301_BYTES);
+    output[X301_BYTES - 1U] &= 0x1fU;
+    for (index = X301_BYTES; index > 0; index--) {
+        if (output[index - 1U] == FIELD_MODULUS[index - 1U])
+            continue;
+        at_least_modulus = output[index - 1U] > FIELD_MODULUS[index - 1U];
+        break;
+    }
+    if (!at_least_modulus)
+        return;
+    for (index = 0; index < X301_BYTES; index++) {
+        unsigned int subtrahend = FIELD_MODULUS[index] + borrow;
+        unsigned int value = output[index];
+
+        output[index] = (unsigned char)(value - subtrahend);
+        borrow = value < subtrahend;
+    }
+}
+
+static int x301_encoding_is_canonical(
+    const unsigned char public_bytes[X301_BYTES])
+{
+    size_t index;
+
+    if ((public_bytes[X301_BYTES - 1U] & 0xe0U) != 0)
+        return 0;
+    for (index = X301_BYTES; index > 0; index--) {
+        if (public_bytes[index - 1U] != FIELD_MODULUS[index - 1U])
+            return public_bytes[index - 1U] < FIELD_MODULUS[index - 1U];
+    }
+    return 0;
 }
 
 static int pass(const char *label)
@@ -483,6 +531,106 @@ static int hybrid_ciphertext_boundary_mutations_are_atomic(
                HYBRID_SECRET_BYTES);
 }
 
+static int hybrid_aliases_canonicalize_before_storage_and_decapsulation(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *private_key,
+    const unsigned char canonical_public[HYBRID_PUBLIC_BYTES],
+    const unsigned char canonical_ciphertext[HYBRID_CIPHERTEXT_BYTES],
+    const unsigned char canonical_secret[HYBRID_SECRET_BYTES])
+{
+    EVP_PKEY *alias_key = NULL;
+    unsigned char aliased_public[HYBRID_PUBLIC_BYTES];
+    unsigned char exported_public[HYBRID_PUBLIC_BYTES];
+    unsigned char aliased_ciphertext[HYBRID_CIPHERTEXT_BYTES];
+    unsigned char canonicalized_ciphertext[HYBRID_CIPHERTEXT_BYTES];
+    unsigned char alias_secret[HYBRID_SECRET_BYTES];
+    unsigned char comparison_secret[HYBRID_SECRET_BYTES];
+    unsigned int mask;
+    int result = 0;
+
+    for (mask = 0x20U; mask <= 0xe0U; mask += 0x20U) {
+        memcpy(aliased_public, canonical_public, sizeof(aliased_public));
+        aliased_public[HYBRID_PUBLIC_BYTES - 1U] |= (unsigned char)mask;
+        alias_key = import_hybrid_public(
+            libctx, aliased_public, sizeof(aliased_public));
+        if (alias_key == NULL || !export_hybrid_public(
+                alias_key, exported_public)
+                || CRYPTO_memcmp(
+                    exported_public, canonical_public,
+                    HYBRID_PUBLIC_BYTES) != 0)
+            goto done;
+        EVP_PKEY_free(alias_key);
+        alias_key = NULL;
+
+        memcpy(aliased_ciphertext, canonical_ciphertext,
+            sizeof(aliased_ciphertext));
+        aliased_ciphertext[HYBRID_CIPHERTEXT_BYTES - 1U]
+            |= (unsigned char)mask;
+        if (!decapsulate(
+                libctx, private_key, aliased_ciphertext,
+                sizeof(aliased_ciphertext), alias_secret)
+                || CRYPTO_memcmp(
+                    alias_secret, canonical_secret,
+                    HYBRID_SECRET_BYTES) != 0)
+            goto done;
+    }
+
+    memcpy(aliased_public, canonical_public, sizeof(aliased_public));
+    memcpy(aliased_public + MLKEM_PUBLIC_BYTES,
+        FIELD_MODULUS, X301_BYTES);
+    aliased_public[MLKEM_PUBLIC_BYTES] += 2U;
+    alias_key = import_hybrid_public(
+        libctx, aliased_public, sizeof(aliased_public));
+    memcpy(exported_public, canonical_public, sizeof(exported_public));
+    memset(exported_public + MLKEM_PUBLIC_BYTES, 0, X301_BYTES);
+    exported_public[MLKEM_PUBLIC_BYTES] = 2U;
+    if (alias_key == NULL || !export_hybrid_public(alias_key, aliased_public)
+            || CRYPTO_memcmp(
+                aliased_public, exported_public,
+                HYBRID_PUBLIC_BYTES) != 0)
+        goto done;
+    EVP_PKEY_free(alias_key);
+    alias_key = NULL;
+
+    memcpy(aliased_ciphertext, canonical_ciphertext,
+        sizeof(aliased_ciphertext));
+    memcpy(aliased_ciphertext + MLKEM_CIPHERTEXT_BYTES,
+        FIELD_MODULUS, X301_BYTES);
+    aliased_ciphertext[MLKEM_CIPHERTEXT_BYTES] += 2U;
+    memcpy(canonicalized_ciphertext, canonical_ciphertext,
+        sizeof(canonicalized_ciphertext));
+    memset(canonicalized_ciphertext + MLKEM_CIPHERTEXT_BYTES,
+        0, X301_BYTES);
+    canonicalized_ciphertext[MLKEM_CIPHERTEXT_BYTES] = 2U;
+    if (!decapsulate(
+            libctx, private_key, aliased_ciphertext,
+            sizeof(aliased_ciphertext), alias_secret)
+            || !decapsulate(
+                libctx, private_key, canonicalized_ciphertext,
+                sizeof(canonicalized_ciphertext), comparison_secret)
+            || CRYPTO_memcmp(
+                alias_secret, comparison_secret,
+                HYBRID_SECRET_BYTES) != 0)
+        goto done;
+
+    memcpy(aliased_ciphertext, canonical_ciphertext,
+        sizeof(aliased_ciphertext));
+    memcpy(aliased_ciphertext + MLKEM_CIPHERTEXT_BYTES,
+        FIELD_MODULUS, X301_BYTES);
+    if (!decapsulation_failure_is_atomic(
+            libctx, private_key, aliased_ciphertext,
+            sizeof(aliased_ciphertext), HYBRID_SECRET_BYTES))
+        goto done;
+
+    result = 1;
+
+done:
+    OPENSSL_cleanse(comparison_secret, sizeof(comparison_secret));
+    OPENSSL_cleanse(alias_secret, sizeof(alias_secret));
+    EVP_PKEY_free(alias_key);
+    return result;
+}
+
 /*
  * F1-F3 deterministic structured sweep at the hybrid EVP boundary.  This is
  * the documented fallback when libFuzzer/AFL++ is unavailable.  It covers
@@ -499,6 +647,7 @@ static int swept_hybrid_public_is_atomic(
     EVP_PKEY *key = empty_hybrid(libctx);
     unsigned char *unexpected = NULL;
     unsigned char recovered[HYBRID_PUBLIC_BYTES];
+    unsigned char expected[HYBRID_PUBLIC_BYTES];
     int accepted;
     int result = 0;
 
@@ -508,10 +657,15 @@ static int swept_hybrid_public_is_atomic(
     accepted = EVP_PKEY_set1_encoded_public_key(
         key, candidate, candidate_length);
     if (accepted > 0) {
-        if (candidate_length != HYBRID_PUBLIC_BYTES
-                || !export_hybrid_public(key, recovered)
+        if (candidate_length != HYBRID_PUBLIC_BYTES)
+            goto done;
+        memcpy(expected, candidate, HYBRID_PUBLIC_BYTES);
+        canonicalize_x301_oracle(
+            candidate + MLKEM_PUBLIC_BYTES,
+            expected + MLKEM_PUBLIC_BYTES);
+        if (!export_hybrid_public(key, recovered)
                 || CRYPTO_memcmp(
-                    recovered, candidate, HYBRID_PUBLIC_BYTES) != 0)
+                    recovered, expected, HYBRID_PUBLIC_BYTES) != 0)
             goto done;
     } else {
         ERR_clear_error();
@@ -1058,7 +1212,9 @@ int main(int argc, char **argv)
     pass("obsolete hybrid name is rejected");
 
     private_key = generate_hybrid(libctx);
-    if (private_key == NULL || !export_hybrid_public(private_key, public_bytes)) {
+    if (private_key == NULL || !export_hybrid_public(private_key, public_bytes)
+            || !x301_encoding_is_canonical(
+                public_bytes + MLKEM_PUBLIC_BYTES)) {
         fail("H2 hybrid client share is exactly 1568+38=1606 bytes");
         goto done;
     }
@@ -1092,6 +1248,8 @@ int main(int argc, char **argv)
             || !decapsulate(
                 libctx, private_key, ciphertext,
                 sizeof(ciphertext), decapsulated_secret)
+            || !x301_encoding_is_canonical(
+                ciphertext + MLKEM_CIPHERTEXT_BYTES)
             || CRYPTO_memcmp(
                 original_secret, decapsulated_secret,
                 sizeof(original_secret)) != 0) {
@@ -1099,6 +1257,14 @@ int main(int argc, char **argv)
         goto done;
     }
     pass("H2 direct KEM roundtrip is exactly 1606/1606/70");
+
+    if (!hybrid_aliases_canonicalize_before_storage_and_decapsulation(
+            libctx, private_key, public_bytes, ciphertext,
+            original_secret)) {
+        fail("D2 hybrid client and server aliases canonicalize consistently");
+        goto done;
+    }
+    pass("D2 hybrid client and server aliases canonicalize consistently");
 
     if (!encapsulation_short_buffers_are_atomic(libctx, public_key)) {
         fail("H2 short ciphertext/secret buffers fail atomically");

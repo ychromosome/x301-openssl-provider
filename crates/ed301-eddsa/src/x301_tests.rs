@@ -17,8 +17,9 @@ use crate::{
     test_support::{decode_hex_array, splitmix64},
     x301::{
         BASE_U_BYTES, PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, X301_BYTES, X301Error,
-        clamped_scalar_for_test, montgomery_a_for_test, public_from_secret,
-        public_from_secret_ladder_for_test, shared_secret, validate_public_encoding, x301,
+        canonicalize_public_encoding, clamped_scalar_for_test, montgomery_a_for_test,
+        public_from_secret, public_from_secret_ladder_for_test, shared_secret,
+        validate_public_encoding, x301,
     },
 };
 
@@ -151,14 +152,14 @@ fn wycheproof_style_adversarial_corpus_matches_the_x301_contract() {
         .expect("the adversarial corpus has a case array");
     assert_eq!(
         document["schema"].as_str(),
-        Some("x301-wycheproof-taxonomy-v1")
+        Some("x301-wycheproof-taxonomy-v2")
     );
-    assert_eq!(document["case_count"].as_u64(), Some(559));
+    assert_eq!(document["case_count"].as_u64(), Some(560));
     assert_eq!(
         document["case_sha256"].as_str(),
-        Some("519724ffa7c2cbd205f40203be02e0fb092325ecaaf6e10f34a41bbac1640b62")
+        Some("cd93f4025072fac45ebfdc30a9bd8391a3e87cae5265f3b47eddbad1eceb6991")
     );
-    assert_eq!(cases.len(), 559);
+    assert_eq!(cases.len(), 560);
 
     let mut family_counts = std::collections::BTreeMap::<&str, usize>::new();
     for case in cases {
@@ -209,7 +210,7 @@ fn wycheproof_style_adversarial_corpus_matches_the_x301_contract() {
 
     assert_eq!(family_counts.get("W1-LowOrderPublic"), Some(&3));
     assert_eq!(family_counts.get("W2-TwistPublic"), Some(&8));
-    assert_eq!(family_counts.get("W3-NonCanonicalPublic"), Some(&10));
+    assert_eq!(family_counts.get("W3-AliasPublic"), Some(&11));
     assert_eq!(family_counts.get("W4-SpecialScalars"), Some(&8));
     assert_eq!(family_counts.get("W5-SharedSecretEdges"), Some(&8));
     assert_eq!(family_counts.get("W6-LengthAndType"), Some(&10));
@@ -318,7 +319,7 @@ fn d3_clamping_sets_and_clears_exact_bits_without_scalar_rejection() {
 }
 
 #[test]
-fn d2_rejects_wrong_lengths_modulus_boundaries_and_each_high_bit() {
+fn d2_masks_high_bits_reduces_once_and_rejects_wrong_lengths() {
     assert_eq!(public_from_secret(&[]), Err(X301Error::InvalidSecretLength));
     assert_eq!(
         public_from_secret(&[0_u8; SECRET_BYTES - 1]),
@@ -344,23 +345,65 @@ fn d2_rejects_wrong_lengths_modulus_boundaries_and_each_high_bit() {
         ));
     }
 
-    for public in [MODULUS, MODULUS_PLUS_ONE] {
-        assert_eq!(
-            validate_public_encoding(&public),
-            Err(X301Error::NonCanonicalPublic)
-        );
-        assert!(matches!(
-            shared_secret(&SECRET_A, &public),
-            Err(X301Error::NonCanonicalPublic)
-        ));
+    let canonical_base_secret = shared_secret(&SECRET_A, &BASE_U_BYTES).expect("base u");
+    for mask in (0x20_u8..=0xe0).step_by(0x20) {
+        let mut alias = BASE_U_BYTES;
+        alias[PUBLIC_BYTES - 1] |= mask;
+        assert_eq!(canonicalize_public_encoding(&alias), Ok(BASE_U_BYTES));
+        let alias_secret = shared_secret(&SECRET_A, &alias).expect("high-bit alias");
+        assert_eq!(alias_secret.as_bytes(), canonical_base_secret.as_bytes());
     }
 
-    for mask in [0x20_u8, 0x40, 0x80] {
-        let mut public = BASE_U_BYTES;
-        public[PUBLIC_BYTES - 1] |= mask;
+    let zero = [0_u8; PUBLIC_BYTES];
+    let mut one = [0_u8; PUBLIC_BYTES];
+    one[0] = 1;
+    assert_eq!(canonicalize_public_encoding(&MODULUS), Ok(zero));
+    assert_eq!(canonicalize_public_encoding(&MODULUS_PLUS_ONE), Ok(one));
+    assert_eq!(validate_public_encoding(&MODULUS), Ok(()));
+    assert!(matches!(
+        shared_secret(&SECRET_A, &MODULUS),
+        Err(X301Error::AllZeroSharedSecret)
+    ));
+    assert!(matches!(
+        shared_secret(&SECRET_A, &MODULUS_PLUS_ONE),
+        Err(X301Error::AllZeroSharedSecret)
+    ));
+
+    assert_eq!(
+        canonicalize_public_encoding(&MODULUS_MINUS_ONE),
+        Ok(MODULUS_MINUS_ONE)
+    );
+
+    let mut two = [0_u8; PUBLIC_BYTES];
+    two[0] = 2;
+    let p_plus_two = add_small_le(MODULUS, 2);
+    assert_eq!(canonicalize_public_encoding(&p_plus_two), Ok(two));
+    assert_eq!(
+        shared_secret(&SECRET_A, &p_plus_two)
+            .expect("p+2 derives")
+            .as_bytes(),
+        shared_secret(&SECRET_A, &two)
+            .expect("2 derives")
+            .as_bytes()
+    );
+
+    let mut max_301 = [0xff_u8; PUBLIC_BYTES];
+    max_301[PUBLIC_BYTES - 1] = 0x1f;
+    let max_reduced = canonicalize_oracle(max_301);
+    assert_eq!(canonicalize_public_encoding(&max_301), Ok(max_reduced));
+    assert_eq!(
+        shared_secret(&SECRET_A, &max_301)
+            .expect("maximum 301-bit alias derives")
+            .as_bytes(),
+        shared_secret(&SECRET_A, &max_reduced)
+            .expect("maximum reduced coordinate derives")
+            .as_bytes()
+    );
+    for delta in [0_u16, 1] {
+        let alias = sub_small_le(max_301, delta);
         assert_eq!(
-            validate_public_encoding(&public),
-            Err(X301Error::NonCanonicalPublic)
+            canonicalize_public_encoding(&alias),
+            Ok(canonicalize_oracle(alias))
         );
     }
 }
@@ -603,11 +646,50 @@ fn decode_runtime_hex_vec(value: &str) -> Vec<u8> {
         .collect()
 }
 
+fn add_small_le(mut value: [u8; PUBLIC_BYTES], addend: u16) -> [u8; PUBLIC_BYTES] {
+    let mut carry = addend;
+    for byte in &mut value {
+        let sum = u16::from(*byte) + carry;
+        *byte = sum as u8;
+        carry = sum >> 8;
+    }
+    assert_eq!(carry, 0);
+    value
+}
+
+fn sub_small_le(mut value: [u8; PUBLIC_BYTES], subtrahend: u16) -> [u8; PUBLIC_BYTES] {
+    let mut borrow = subtrahend;
+    for byte in &mut value {
+        let right = (borrow & 0xff) as u8;
+        let (difference, underflow) = byte.overflowing_sub(right);
+        *byte = difference;
+        borrow = (borrow >> 8) + u16::from(underflow);
+    }
+    assert_eq!(borrow, 0);
+    value
+}
+
+fn canonicalize_oracle(mut value: [u8; PUBLIC_BYTES]) -> [u8; PUBLIC_BYTES] {
+    value[PUBLIC_BYTES - 1] &= 0x1f;
+    if value.iter().rev().cmp(MODULUS.iter().rev()).is_lt() {
+        return value;
+    }
+
+    let mut borrow = 0_u16;
+    for (byte, modulus) in value.iter_mut().zip(MODULUS) {
+        let right = u16::from(modulus) + borrow;
+        let left = u16::from(*byte);
+        *byte = left.wrapping_sub(right) as u8;
+        borrow = u16::from(left < right);
+    }
+    assert_eq!(borrow, 0);
+    value
+}
+
 fn adversarial_error(code: &str) -> X301Error {
     match code {
         "secret_length" => X301Error::InvalidSecretLength,
         "length" => X301Error::InvalidPublicLength,
-        "noncanonical" | "reserved_bits" => X301Error::NonCanonicalPublic,
         "all_zero" => X301Error::AllZeroSharedSecret,
         _ => panic!("unknown adversarial error code: {code}"),
     }

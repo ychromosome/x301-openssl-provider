@@ -2,7 +2,7 @@
 """Generate the X301 Wycheproof-taxonomy adversarial corpus.
 
 Method sources are the X25519/X448 case classes used by Project Wycheproof,
-RFC 7748 sections 5-6, and the strict D2-D4 decisions in
+RFC 7748 sections 5-6, and the D2-D4 decisions in
 ``docs/X301_DRAFT.md``.  No foreign curve value is copied.  Every expected
 X301 byte string is calculated by the adjacent, variable-time specification
 oracle.  This script is test-only and must never process production secrets.
@@ -165,34 +165,40 @@ def _build_cases() -> list[dict[str, Any]]:
         )
         accepted_twist += 1
 
-    # W3: strict D2 rejects both in-range reserved-bit aliases and ordinary
-    # 301-bit integers at or above p.  These are separate error classes.
-    noncanonical_values = [ref.P, ref.P + 1, ref.P + 947, 2**301 - 1]
-    for index, value in enumerate(noncanonical_values):
+    # W3: D2 masks the three unused bits and subtracts p once.
+    for index, value in enumerate((ref.P, ref.P + 1)):
         add(
             _invalid_case(
                 tc_id,
-                "W3-NonCanonicalPublic",
-                ["NonCanonicalPublic", f"AtOrAboveP-{index}"],
+                "W3-AliasPublic",
+                ["AliasPublic", "ReducedModP", f"AllZero-{index}"],
                 ref._shake(b"X301-W3-secret-v1/", index),
                 value.to_bytes(ref.FIELD_BYTES, "little"),
                 "derive",
-                "noncanonical",
+                "all_zero",
             )
         )
-    high_masks = (0x20, 0x40, 0x80, 0x60, 0xA0, 0xE0)
+    for index, value in enumerate((ref.P + 947, 2**301 - 1), start=2):
+        add(
+            _valid_case(
+                tc_id,
+                "W3-AliasPublic",
+                ["AliasPublic", "ReducedModP", f"Boundary-{index}"],
+                ref._shake(b"X301-W3-secret-v1/", index),
+                value.to_bytes(ref.FIELD_BYTES, "little"),
+            )
+        )
+    high_masks = range(0x20, 0x100, 0x20)
     for index, mask in enumerate(high_masks):
         encoded = bytearray(ref.BASE_U_ENCODING)
         encoded[-1] |= mask
         add(
-            _invalid_case(
+            _valid_case(
                 tc_id,
-                "W3-NonCanonicalPublic",
-                ["NonCanonicalPublic", "ReservedBits", f"Mask-{mask:02x}"],
+                "W3-AliasPublic",
+                ["AliasPublic", "IgnoredHighBits", f"Mask-{mask:02x}"],
                 ref._shake(b"X301-W3-high-secret-v1/", index),
                 bytes(encoded),
-                "derive",
-                "reserved_bits",
             )
         )
 
@@ -342,7 +348,7 @@ def build_document() -> dict[str, Any]:
     expected_counts = {
         "W1-LowOrderPublic": 3,
         "W2-TwistPublic": 8,
-        "W3-NonCanonicalPublic": 10,
+        "W3-AliasPublic": 11,
         "W4-SpecialScalars": 8,
         "W5-SharedSecretEdges": 8,
         "W6-LengthAndType": 10,
@@ -350,7 +356,7 @@ def build_document() -> dict[str, Any]:
     }
     _require(family_counts == expected_counts, "adversarial family cardinality mismatch")
     return {
-        "schema": "x301-wycheproof-taxonomy-v1",
+        "schema": "x301-wycheproof-taxonomy-v2",
         "warning": "Taxonomy only; no X25519/X448 vector value is copied",
         "sources": [
             "Project Wycheproof X25519/X448 test-case taxonomy",
