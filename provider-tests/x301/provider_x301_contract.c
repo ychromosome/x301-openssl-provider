@@ -1096,6 +1096,21 @@ static void clear_x301_failpoints(void)
     unsetenv("X301_PROVIDER_PANIC_FAILPOINT");
 }
 
+static int allocation_failure_is_reported(void)
+{
+    unsigned long error;
+    int found = 0;
+
+    while ((error = ERR_get_error()) != 0) {
+        const char *reason = ERR_reason_error_string(error);
+
+        if (ERR_GET_REASON(error) == 4 && reason != NULL
+                && strcmp(reason, "X301 allocation failure") == 0)
+            found = 1;
+    }
+    return found;
+}
+
 static int allocation_failpoints_are_atomic(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY *private_key,
@@ -1135,8 +1150,9 @@ static int allocation_failpoints_are_atomic(
 
     if (setenv("X301_PROVIDER_ALLOC_FAILPOINT", "key_duplicate", 1) != 0)
         goto done;
+    ERR_clear_error();
     temporary_key = EVP_PKEY_dup(private_key);
-    if (temporary_key != NULL)
+    if (temporary_key != NULL || !allocation_failure_is_reported())
         goto done;
     clear_x301_failpoints();
     ERR_clear_error();
@@ -1166,8 +1182,9 @@ static int allocation_failpoints_are_atomic(
             || setenv("X301_PROVIDER_ALLOC_FAILPOINT",
                 "exchange_duplicate", 1) != 0)
         goto done;
+    ERR_clear_error();
     duplicate = EVP_PKEY_CTX_dup(context);
-    if (duplicate != NULL)
+    if (duplicate != NULL || !allocation_failure_is_reported())
         goto done;
     clear_x301_failpoints();
     ERR_clear_error();

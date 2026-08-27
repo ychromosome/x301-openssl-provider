@@ -566,8 +566,11 @@ static void *x301_key_duplicate(const void *source_data, int selection)
         source->inner,
         x301_wants_private(selection),
         x301_wants_public(selection));
-    if (inner == NULL)
+    if (inner == NULL) {
+        X301_RAISE(source->provider, X301_R_ALLOCATION_FAILURE,
+            "X301 key duplication failed");
         return NULL;
+    }
     return x301_wrap_key(source->provider, inner);
 }
 
@@ -778,8 +781,11 @@ static void *x301_exchange_duplicate(void *exchange_context)
     if (source == NULL || source->provider == NULL || source->inner == NULL)
         return NULL;
     inner = source->provider->rust->exchange_duplicate(source->inner);
-    if (inner == NULL)
+    if (inner == NULL) {
+        X301_RAISE(source->provider, X301_R_ALLOCATION_FAILURE,
+            "X301 exchange-context duplication failed");
         return NULL;
+    }
     return x301_wrap_exchange(source->provider, inner);
 }
 

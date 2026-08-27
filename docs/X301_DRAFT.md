@@ -517,16 +517,17 @@ The measured production counts are:
 | X301 wire core before its test-only section | 347 | 214 | under 400 |
 | Prepared repeated-derive accelerator in the shared Edwards module | 377 added | 299 added | separately reported |
 | Combined X301-specific product surface | 724 | 513 | exceeds the original 400-line target by 113 source lines |
-| `hybrid_kem.c` | 583 | 516 | |
-| hybrid-only blocks in `provider_shim.c` | 81 | 80 | |
-| Hybrid total | 664 | 596 | under 600 source lines |
+| `hybrid_kem.c` | 703 | 635 | |
+| hybrid-only blocks in `provider_shim.c` | 106 | 104 | |
+| Hybrid total | 809 | 739 | exceeds the 600-line target by 139 source lines |
 
 The combined X301 count is reported rather than hidden. The overrun is the
 cost of the owner-requested prepared-Derive target: simpler ladder, paired,
 width-4/5/6 and unregularized-comb candidates did not reach 1.56 times X25519.
 It requires explicit review and is not absorbed into the hybrid budget. The
-hybrid physical total is also reported rather than hidden: 68 lines are
-required source citations, contract comments, and spacing. The implementation budget
-uses the stated reproducible nonblank/non-comment metric so documentation
-mandated by this profile does not penalize the simpler implementation. Both
-surfaces MUST be recomputed whenever a counted product file changes.
+hybrid overrun is retained because the additional code gives each validation,
+allocation and component failure a specific provider error while keeping
+output assignment atomic and secret cleanup explicit. Removing those paths
+would reduce auditability without removing a mechanism. No ML-KEM, combiner,
+KDF, RNG or persistent hybrid format was added. Both surfaces MUST be
+recomputed whenever a counted product file changes.
