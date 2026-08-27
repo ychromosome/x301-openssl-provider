@@ -3,7 +3,7 @@
 Experimental implementations of:
 
 - **X301**, a 38-byte XDH profile over the frozen ED301 curve; and
-- **X301MLKEM1024**, a private-use TLS 1.3 hybrid group that combines X301
+- **MLKEM1024X301**, a private-use TLS 1.3 hybrid group that combines X301
   with OpenSSL's ML-KEM-1024 implementation.
 
 The repository also contains the Ed301-EdDSA core and signature provider from
@@ -18,13 +18,12 @@ NamedGroup `0xFE2E` is test-only and is not an IANA allocation.
 | Component | Status |
 |---|---|
 | Ed301-EdDSA | Frozen draft-00 byte contract; integration candidate |
-| X301 | Implementation-frozen experimental candidate |
-| X301MLKEM1024 | Implementation-frozen private-use candidate |
+| X301 | Experimental review candidate |
+| MLKEM1024X301 | Experimental private-use integration |
 
-Independent rereviews and a Standard Codex Security scan produced no confirmed
-product vulnerability in the frozen X301 revision. None of the three
-components is released or approved for production use. See `STATUS.md` for
-completed and open gates.
+None of the three components is released or approved for production use.
+There is no IANA allocation or organizationally independent X301
+implementation. See `STATUS.md` for the remaining gates.
 
 ## Design boundaries
 
@@ -32,12 +31,13 @@ completed and open gates.
 - X301 public keys and shared secrets are 38-byte little-endian u-coordinates.
 - Key generation uses OpenSSL's application-linked private RAND path.
 - Derivation rejects non-canonical peer keys and an all-zero shared secret.
-- Repeated main-curve derive may use a constant-time public-peer comb; first
-  use and twist inputs retain the RFC-7748-shaped ladder.
-- X301MLKEM1024 obtains ML-KEM-1024 exclusively from OpenSSL's default
-  provider. The project contains no ML-KEM implementation and no hybrid KDF.
+- Every derive uses the same RFC-7748-shaped ladder; there is no implicit
+  repeated-peer accelerator.
+- MLKEM1024X301 obtains ML-KEM-1024 through EVP using the child library
+  context's provider and property policy. The project contains no ML-KEM
+  implementation and no hybrid KDF.
 - Hybrid values are concatenated ML-KEM first, following the documented TLS
-  hybrid pattern.
+  hybrid pattern; the public name follows that component order.
 
 The complete byte and provider contracts are in `docs/X301_DRAFT.md`.
 Construction choices and deviations are recorded in
@@ -91,8 +91,12 @@ in `docs/PERFORMANCE_MEASUREMENT.md`.
 - `crates/ed301-eddsa/src/x301.rs`: X301 core.
 - `provider/crates/x301-provider/`: OpenSSL X301 and hybrid provider.
 - `provider-tests/x301/`: independent oracle and frozen vectors.
+- `fuzz/`: persisted coverage-guided core/provider seed corpora and Rust
+  target.
 - `docs/X301_DRAFT.md`: protocol and encoding contract.
 - `docs/OID_REGISTRY.md`: private OID and TLS codepoint registry.
+- `evidence/curve-provenance/`: manifest-bound curve search and verification
+  evidence, including all 355 worker results.
 - `ZEROIZATION_AND_CT_BOUNDARY.md`: secret-handling and constant-time limits.
 
 ## License

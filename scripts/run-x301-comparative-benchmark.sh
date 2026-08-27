@@ -179,7 +179,7 @@ run_case() {
         kex:X25519) bytes=32 ;;
         kex:X448) bytes=56 ;;
         kex:X301) bytes=38; properties=provider=x301; module_arg=$MODULES ;;
-        kem:X301MLKEM1024) properties=provider=x301; module_arg=$MODULES ;;
+        kem:MLKEM1024X301) properties=provider=x301; module_arg=$MODULES ;;
         signature:ED25519|signature:ED448) binary=$SBENCH ;;
         signature:Ed301-EdDSA-draft-00)
             binary=$SBENCH
@@ -211,11 +211,11 @@ run_case() {
 for ((run = 1; run <= REPETITIONS; run++)); do
     if (( run % 2 == 1 )); then
         kexes=(X25519 X448 X301)
-        kems=(ML-KEM-1024 X25519MLKEM768 X448MLKEM1024 X301MLKEM1024)
+        kems=(ML-KEM-1024 X25519MLKEM768 X448MLKEM1024 MLKEM1024X301)
         signatures=(ED25519 ED448 Ed301-EdDSA-draft-00)
     else
         kexes=(X301 X448 X25519)
-        kems=(X301MLKEM1024 X448MLKEM1024 X25519MLKEM768 ML-KEM-1024)
+        kems=(MLKEM1024X301 X448MLKEM1024 X25519MLKEM768 ML-KEM-1024)
         signatures=(Ed301-EdDSA-draft-00 ED448 ED25519)
     fi
     for algorithm in "${kexes[@]}"; do

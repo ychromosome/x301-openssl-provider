@@ -60,10 +60,17 @@ X301 arithmetic source was imported from the historical donor repository.
 The independent Python implementation under `reference/x301/` is test-only
 and is not linked into the product.
 
-X301MLKEM1024 follows the published TLS hybrid layout named in
-`docs/X301_DRAFT.md`. ML-KEM-1024 is fetched from each normative OpenSSL
-default provider. This repository contains no ML-KEM implementation, copied
-ML-KEM subroutine, hybrid KDF or standalone hybrid encoding.
+MLKEM1024X301 follows the published TLS hybrid construction named in
+`docs/X301_DRAFT.md`. ML-KEM-1024 is fetched through EVP in the provider child
+library context, whose provider/property policy selects the implementation.
+This repository contains no ML-KEM implementation, copied ML-KEM subroutine,
+hybrid KDF or standalone hybrid encoding.
+
+The complete preserved curve-selection package is published under
+`evidence/curve-provenance/`. Its original manifest covers the search tools,
+355 worker results, transcript, point-count/security tools, certificates,
+verifiers and outputs. This is after-the-fact provenance, not a pre-search
+public commitment or independent review.
 
 ## Safe-Rust performance repair input
 

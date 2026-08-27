@@ -1,0 +1,41 @@
+name: core-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Expose resolved Rust binaries to hermetic gates
+        run: |
+          for tool in cargo rustc rustfmt cargo-clippy rustdoc; do
+            sudo ln -sf "$(rustup which "$tool")" "/usr/bin/$tool"
+          done
+      - name: Verified core, differential and fuzz gates
+        run: |
+          snapshot=$(mktemp -d)
+          trap 'chmod -R u+w "$snapshot"; rm -rf "$snapshot"' EXIT
+          {
+            printf '%s\n' SOURCE_MANIFEST.sha256
+            awk '{ print substr($0, 67) }' SOURCE_MANIFEST.sha256
+          } | tar -cf - -T - | tar -xf - -C "$snapshot"
+          digest=$(sha256sum "$snapshot/SOURCE_MANIFEST.sha256" | awk '{ print $1 }')
+          chmod -R a-w "$snapshot"
+          env ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            sh "$snapshot/scripts/check.sh"
+          env ED301_SOURCE_MODE=archive \
+            ED301_VERIFIED_SNAPSHOT=1 \
+            ED301_EXPECTED_SOURCE_MANIFEST_SHA256="$digest" \
+            "$snapshot/scripts/run-x301-fuzz.sh" --runs 20000

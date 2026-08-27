@@ -10,7 +10,7 @@ use crypto_bigint::Choice;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
-    edwards::{EdwardsPoint, X301PreparedComb},
+    edwards::EdwardsPoint,
     field_5x64::{Fe301, Fe301Lazy},
     parameters::{FIELD_BITS, FIELD_BYTES},
     scalar::Scalar,
@@ -91,26 +91,6 @@ pub enum X301Error {
 /// value is deliberately neither `Copy` nor `Clone` and is erased on drop.
 pub struct SharedSecret(Secret<[u8; SHARED_BYTES]>);
 
-/// Public peer state prepared for repeated X301 derivation.
-///
-/// Main-curve peers use a constant-time fixed-base comb.  Twist and
-/// exceptional Montgomery coordinates retain the RFC-7748 ladder.  The
-/// choice depends only on the public peer encoding and changes neither the
-/// accepted input set nor the shared-secret byte contract.
-#[derive(Clone)]
-pub struct PreparedX301Peer {
-    inner: PreparedPeerInner,
-}
-
-#[derive(Clone)]
-// The public table is the payload being cached. Indirection would add an
-// allocator requirement to the no_std core without reducing that payload.
-#[allow(clippy::large_enum_variant)]
-enum PreparedPeerInner {
-    MainCurve(X301PreparedComb),
-    Montgomery(Fe301),
-}
-
 impl Zeroize for SharedSecret {
     fn zeroize(&mut self) {
         self.0.zeroize();
@@ -180,45 +160,6 @@ pub fn shared_secret(secret: &[u8], peer_public: &[u8]) -> Result<SharedSecret, 
     x301(secret, peer_public)
 }
 
-/// Prepare one public peer for repeated constant-time X301 derivation.
-///
-/// Preparation is allowed to depend on the public coordinate.  Main-curve
-/// points are mapped to the birationally equivalent Edwards form and receive
-/// a fixed-base comb table; twist and exceptional inputs retain the ladder.
-pub fn prepare_peer(peer_public: &[u8]) -> Result<PreparedX301Peer, X301Error> {
-    let u = decode_public(peer_public)?;
-    let inner = edwards_from_montgomery_u(u).map_or(PreparedPeerInner::Montgomery(u), |point| {
-        PreparedPeerInner::MainCurve(point.prepare_x301_comb())
-    });
-    Ok(PreparedX301Peer { inner })
-}
-
-/// Derive a shared secret from a previously prepared public peer.
-///
-/// The scalar schedule and all table accesses remain constant-time.  The
-/// public main-curve/twist classification performed by [`prepare_peer`] is
-/// the only path distinction.
-pub fn shared_secret_prepared(
-    secret_bytes: &[u8],
-    peer: &PreparedX301Peer,
-) -> Result<SharedSecret, X301Error> {
-    let secret_bytes: &[u8; X301_BYTES] = secret_bytes
-        .try_into()
-        .map_err(|_| X301Error::InvalidSecretLength)?;
-    let scalar = clamp_scalar(secret_bytes);
-    match &peer.inner {
-        PreparedPeerInner::MainCurve(table) => {
-            let point = secret(EdwardsPoint::scalar_mul_x301_comb(&scalar, table));
-            let (x, z) = point.montgomery_projective();
-            finalize(secret(ProjectiveOutput {
-                x: Fe301Lazy::from_fe301(x),
-                z: Fe301Lazy::from_fe301(z),
-            }))
-        }
-        PreparedPeerInner::Montgomery(u) => finalize(ladder(&scalar, *u)),
-    }
-}
-
 /// Validate only the strict canonical encoding of an X301 public coordinate.
 ///
 /// Source: RFC 7748 section 5's little-endian field encoding, intentionally
@@ -235,21 +176,6 @@ fn decode_public(public: &[u8]) -> Result<Fe301, X301Error> {
     Fe301::from_canonical_bytes(bytes)
         .into_option_copied()
         .ok_or(X301Error::NonCanonicalPublic)
-}
-
-fn edwards_from_montgomery_u(u: Fe301) -> Option<EdwardsPoint> {
-    // D1 inverse map: y = (u - 1) / (u + 1).  The sign of x is irrelevant
-    // because P and -P produce the same Montgomery u after scalar multiply.
-    let denominator = u.add(Fe301::ONE);
-    let inverse = denominator.invert();
-    let mut present = inverse.is_some();
-    declassify(&mut present);
-    if !present.to_bool() {
-        return None;
-    }
-    let y = u.sub(Fe301::ONE).mul(inverse.to_inner_unchecked());
-    let encoded = y.to_canonical_bytes();
-    EdwardsPoint::decode(&encoded).ok()
 }
 
 fn clamp_scalar(input: &[u8; X301_BYTES]) -> Secret<[u8; X301_BYTES]> {

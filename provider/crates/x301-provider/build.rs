@@ -87,7 +87,13 @@ fn main() {
     }
 
     require_exact_environment("X301_HERMETIC_PROVIDER_BUILD", "1");
-    require_exact_environment("CC", "/usr/bin/gcc");
+    let fuzz_coverage = env::var_os("CARGO_FEATURE_TEST_FUZZ_COVERAGE").is_some();
+    let compiler_path = if fuzz_coverage {
+        "/usr/bin/clang"
+    } else {
+        "/usr/bin/gcc"
+    };
+    require_exact_environment("CC", compiler_path);
     require_exact_environment("AR", "/usr/bin/ar");
     reject_native_injection_environment();
     let include_dir = canonical_directory("OPENSSL_INCLUDE_DIR");
@@ -99,7 +105,11 @@ fn main() {
     let archive = output_dir.join("libx301_provider_shim.a");
     let hybrid = env::var_os("CARGO_FEATURE_TLS_X301_MLKEM1024").is_some();
     let sanitizer = env::var_os("CARGO_FEATURE_TEST_SANITIZER").is_some();
-    let mut compiler = Command::new("/usr/bin/gcc");
+    assert!(
+        !(sanitizer && fuzz_coverage),
+        "sanitizer and fuzz-coverage variants must remain separate"
+    );
+    let mut compiler = Command::new(compiler_path);
     compiler
         .arg("-std=c11")
         .arg("-fPIC")
@@ -120,6 +130,9 @@ fn main() {
             .arg("-fno-sanitize-recover=all")
             .arg("-fno-omit-frame-pointer");
     }
+    if fuzz_coverage {
+        compiler.arg("-fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp");
+    }
     if env::var_os("CARGO_FEATURE_TEST_FAILPOINT").is_some() {
         compiler.arg("-DX301_TEST_FAILPOINT_ARTIFACT=1");
     }
@@ -134,7 +147,7 @@ fn main() {
         "C provider shim compilation failed"
     );
     if hybrid {
-        let mut hybrid_compiler = Command::new("/usr/bin/gcc");
+        let mut hybrid_compiler = Command::new(compiler_path);
         hybrid_compiler
             .arg("-std=c11")
             .arg("-fPIC")
@@ -155,6 +168,9 @@ fn main() {
                 .arg("-fsanitize=address,undefined")
                 .arg("-fno-sanitize-recover=all")
                 .arg("-fno-omit-frame-pointer");
+        }
+        if fuzz_coverage {
+            hybrid_compiler.arg("-fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp");
         }
         assert!(
             hybrid_compiler

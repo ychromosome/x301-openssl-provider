@@ -1,11 +1,11 @@
-# X301 and X301MLKEM1024 experimental profile
+# X301 and MLKEM1024X301 experimental profile
 
 Status: project draft, 2026-08-25. This document is not an IETF or NIST
 standard and does not assign a public TLS codepoint. The words MUST, MUST NOT,
-SHOULD and MAY describe the frozen ED301 project profile only.
+SHOULD and MAY describe this experimental ED301 project profile only.
 
 The governing design rule is simplicity: X301 is an RFC-7748-shaped use of
-the already reviewed ED301 field, and X301MLKEM1024 is TLS wiring around X301
+the already reviewed ED301 field, and MLKEM1024X301 is TLS wiring around X301
 and OpenSSL's ML-KEM-1024. Neither construction creates a second field engine,
 an ML-KEM implementation, a combiner KDF, or a standalone hybrid protocol.
 
@@ -14,7 +14,6 @@ an ML-KEM implementation, a combiner KDF, or a standalone hybrid protocol.
 | Subject | Standard or contract source | Local use |
 | --- | --- | --- |
 | Montgomery conversion, ladder and XDH API pattern | [RFC 7748 Sections 4-6](https://www.rfc-editor.org/rfc/rfc7748.html) | D1-D4, scalar/u processing, all-zero check |
-| Fixed-base comb and signed nonzero comb schedule | Lim and Lee, *More Flexible Exponentiation with Precomputation*, CRYPTO '94; [Hedabou, Pinel and Beneteau, ISPEC 2005](https://doi.org/10.1007/978-3-540-31979-5_8) | Public-peer precomputation and regular nonzero signed columns in `X-PREP`; constant-time selection remains a local proof obligation |
 | TLS 1.3 group negotiation and key schedule | [RFC 9846 Sections 4.3.7, 4.3.8, 7.1 and 7.4](https://www.rfc-editor.org/info/rfc9846/) | NamedGroup/private-use range, fresh KeyShare values, raw asymmetric secret and the TLS KDF |
 | Hybrid TLS construction | [RFC 9954](https://www.rfc-editor.org/rfc/rfc9954.html) | Concatenated component shares and secrets; failure as one group |
 | Registered X25519/ML-KEM instance | [RFC 10024 Sections 4-5](https://www.rfc-editor.org/rfc/rfc10024.html) | ML-KEM-first ordering and role-dependent share layout |
@@ -39,19 +38,20 @@ The provider profile has exactly two additions:
 
 1. `X301`, a provider KEYMGMT/KEYEXCH algorithm with 38-byte raw private,
    public and derived-secret values.
-2. `X301MLKEM1024`, a TLS 1.3 hybrid group advertised through OpenSSL's
+2. `MLKEM1024X301`, a TLS 1.3 hybrid group advertised through OpenSSL's
    `TLS-GROUP` capability.
 
-ML-KEM-1024 MUST be fetched through EVP from the OpenSSL default provider in
-the normative 3.5.7 and 4.0.1 lanes. The project MUST NOT implement, vendor,
-partially reproduce, or expose project-owned ML-KEM arithmetic.
+ML-KEM-1024 MUST be fetched through EVP in the provider child library context.
+The child context's provider and property policy selects the implementation;
+the adapter MUST NOT hard-code a provider name. The project MUST NOT implement,
+vendor, partially reproduce, or expose project-owned ML-KEM arithmetic.
 
 Provider modules accept the OpenSSL ABI major against which they were built
 (3 or 4); they do not impose a minor- or patch-version runtime check. The
 exact lanes above are reproducibility baselines, not an equality requirement.
-Hybrid operations additionally require `ML-KEM-1024` to be available from the
-default provider and fail without partial output if it is unavailable. Raw
-X301 does not have that feature dependency.
+Hybrid operations additionally require a permitted `ML-KEM-1024`
+implementation to be available in the child context and fail without partial
+output if it is unavailable. Raw X301 does not have that feature dependency.
 
 OpenSSL requires a `TLS-GROUP` with `is-kem=1` to name provider KEYMGMT and KEM
 operations that libssl fetches through EVP. Consequently, the hybrid adapter
@@ -209,7 +209,7 @@ the result.
 
 ### 5.3 Scalar multiplication and output
 
-The canonical and fallback implementation is the RFC 7748 Section 5
+The sole derive implementation is the RFC 7748 Section 5
 Montgomery ladder for bits 300 down through 0 with `A24=(A-2)/4`. D3 fixes bit
 300 to one and bits 1 and 0 to zero. The implementation therefore folds the
 top bit into initialization, runs 298 full rounds for bits 299 through 2, and
@@ -224,22 +224,9 @@ inversion and encoding boundary. For doubling, multiplying both projective
 outputs by `q=a-d=2086388028` permits `A24=d/(a-d)=301/q` to use the two public
 32-bit factors `q` and `301` instead of a dense field constant. The ratio
 `X/Z` is unchanged. The product `q*AA` is computed once and reused in both
-doubling outputs. Twist and exceptional Montgomery inputs always use this path.
-
-For repeated derivation with the same public main-curve peer, the provider may
-use the registered `X-PREP` fixed-base comb. Preparation maps the public peer
-to Edwards form, multiplies it by the cofactor, and creates a public table. The
-secret schedule uses 305 regular signed digits in 61 fixed rounds; every round
-scans all 16 entries. Internally, `X` and `T` are scaled by `45677` to the
-isomorphic `a=1`, `d'=d/a` model. `Y` and `Z`, hence the output
-`u=(Z+Y)/(Z-Y)`, are unchanged. The comb continues to use `Fe301`; the ladder
-uses only bounded wrappers around the same limbs and arithmetic backend.
-
-The provider's first derive after peer setup remains on the ladder. A second
-call may build the public table; subsequent calls use the comb. Peer
-replacement and derive reinitialization discard the table. Main-curve/twist
-classification depends only on the public encoding. Both paths must return
-identical bytes and apply the same all-zero rule.
+doubling outputs. Main-curve, twist, repeated and exceptional Montgomery
+inputs all use this same ladder and the same all-zero rule. No peer-dependent
+precomputation or second secret-scalar schedule exists.
 
 Inversion, encoding and every error path use the existing secret-ownership and
 zeroization rules. No variable-time secret schedule is permitted.
@@ -282,12 +269,14 @@ also forbids an application from importing the same 38 raw octets for both
 algorithms; type separation cannot detect deliberate caller-side byte reuse,
 so this remains an explicit protocol rule as well as a cross-type API test.
 
-## 7. X301MLKEM1024 TLS group
+## 7. MLKEM1024X301 TLS group
 
 ### 7.1 H1/H2: exact layout
 
-The ordering follows X25519MLKEM768 in RFC 10024, including its ML-KEM-first
-choice. It MUST NOT copy the historically different SecP/ML-KEM ordering.
+The ordered component sequence is ML-KEM-1024 followed by X301. The public name
+`MLKEM1024X301` and every byte concatenation follow that same order, as required
+by the general RFC 9954 naming convention. The historical
+`X25519MLKEM768` naming exception is not copied.
 
 | Value | Exact construction | Size |
 | --- | --- | ---: |
@@ -307,11 +296,13 @@ otherwise combine it.
 
 ### 7.2 E1/E3: component ownership
 
-ML-KEM key generation, encapsulation and decapsulation are performed only by
-the FIPS-203 ML-KEM implementation fetched from the OpenSSL default provider.
-The ED301 provider owns no ML-KEM symbol or intermediate step. X301 is the
-project-owned KEYEXCH component described in Sections 3-6. The adapter only
-parses fixed lengths, invokes both components and concatenates their outputs.
+ML-KEM key generation, encapsulation and decapsulation are performed only by a
+FIPS-203 ML-KEM implementation fetched through EVP in the provider child
+library context. Its inherited provider/property policy selects the
+implementation. The ED301 provider owns no ML-KEM symbol or intermediate step.
+X301 is the project-owned KEYEXCH component described in Sections 3-6. The
+adapter only parses fixed lengths, invokes both components and concatenates
+their outputs.
 
 ### 7.3 H3: atomic failure and implicit rejection
 
@@ -345,10 +336,17 @@ Ed301 key object.
 
 ## 8. Materialized c44730 curve and twist evidence
 
-The minimal selected final evidence is materialized at
-`../evidence/curve-freeze/`. Its `README.md` defines the selection and its
-provenance boundary; `UPSTREAM_SELECTED_SHA256SUMS` fixes the twelve selected
-upstream files. The mathematical evidence used by this draft is limited to:
+The complete preserved technical package is materialized at
+`../evidence/curve-provenance/`. Its original manifest authenticates 458
+archived files, including the search programs, all 355 worker results, the
+combined transcript, point-count/security scripts, certificates, verifiers and
+recorded outputs. `REPRODUCE.md` gives quick/full verification and a fresh
+search through `c=50687`.
+
+The package establishes the recorded deterministic rule `s=947+c`,
+`a=s^2 mod p`, complete recorded coverage through `c=50687`, and the first
+qualifying candidate at `c=44730`. The selected records most directly used by
+this draft are below `archive/ed301_technischer_abschluss/`:
 
 - `parameter/ed301-v1.json`;
 - `rohresultate/audit_c44730_full_reproducibility_pari.txt`;
@@ -359,11 +357,10 @@ upstream files. The mathematical evidence used by this draft is limited to:
 - `rohresultate/c44730_q_twist_nminus1_bls_independent_python.txt` and
   `zertifikate/c44730_q_twist_nminus1_bls_internal.pari`.
 
-The two included reports provide historical context only. Their links to
-omitted scripts, older `phase_a` outputs, rejected candidates and historical
-signature/X301 profiles are not evidence or normative input for this draft.
-In particular, this profile does not inherit the historical special
-annihilating-twist-scalar rejection; Sections 5.2 and 5.4 remain controlling.
+The reports provide historical context only. Historical signature and X301
+profiles do not override this draft. In particular, this profile does not
+inherit the historical special annihilating-twist-scalar rejection; Sections
+5.2 and 5.4 remain controlling.
 
 The selected parameter JSON and the full/focused PARI outputs agree exactly
 on `p`, Edwards `a,d`, Montgomery `A,B,A24_minus`, `N=4q`,
@@ -396,12 +393,10 @@ Their materialized diff consists of two metadata-wording changes (`status`
 and `field.formal_primality_proof`); the checked cryptographic values and
 encodings match.
 
-The checkout-local materialization and hash gate is therefore closed for this
-selected subset. The subset omits the original upstream manifests,
-reproduction document and verifier scripts, so it does not by itself prove a
-complete upstream tree, source-commit identity, from-scratch reproducibility
-or organizationally independent external review. Those are separate
-provenance and assurance claims.
+The checkout-local package is complete against its preserved original
+manifest and reproducible with the supplied tools. It remains after-the-fact
+provenance: no independently timestamped public commitment predates the search,
+and publication is not an organizationally independent external review.
 
 ## 9. Independent vectors
 
@@ -434,7 +429,7 @@ The integration is accepted only against the exact source and binary gates
 named below.  Passing them does not change the experimental status or create
 a standards-conformance claim:
 
-| Contract | Required evidence | Current status |
+| Contract | Required evidence | Retained evidence / required gate |
 | --- | --- | --- |
 | D1 | algebra, exceptional points, 256 deterministic round trips/homomorphisms | PASS in the independent Python oracle |
 | T1 | fixed scalar/u/basepoint KATs and random DH agreement | PASS: four fixed KATs and the T5 DH stream |
@@ -442,14 +437,14 @@ a standards-conformance claim:
 | T3 | `p`, `p+1`, bits 301-303, length 37/39 | PASS in Python, Rust and EVP boundaries |
 | T4 | all main/twist order-1/2/4 x-lines and rejection | PASS: independently derived `u=0,1,p-1`; direct EVP rejects all three in both KAT directions |
 | T5 | at least 10,000 independent differential cases | PASS; canonical digest `257711151f37d9011cbf42123901ae914b77e461db7edb80ee85405e4b97d076` |
-| T6 | KEYEXCH/KEYMGMT EVP matrix in 3.5.7 and 4.0.1 | PASS on both exact lanes |
-| T7 | deterministic derive and poisoned-RAND split | PASS on both exact lanes |
-| T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | PASS on both exact lanes, including fresh component digests across resumption, fallback and no-common-group failure |
-| T9 | ML-KEM mutation, all-zero X301 and boundary mutations | PASS on both exact lanes; wire mutation fails protected-record authentication without an explicit KEM error |
-| T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | PASS: 35 ML-KEM-1024 cases/105 checks on 3.5.7 and 36 cases/108 checks on 4.0.1 |
-| T11 | cover public derivation, signing, X301 key generation, ladder derive and prepared derive, each in defined and tainted mode | PASS: all ten cases on the final read-only archive snapshot; its externally anchored source-manifest digest is recorded with the run |
-| T12 | ladder/cswap/field, fixed-base key-generation and prepared-comb disassembly gate | PASS on both final provider modules: one fixed 298-round variable ladder edge, three fixed doublings and a 61-row, 16-entry full-scan prepared comb; dynamic taint supplies the complementary secret-address check |
-| T13 | scalar, ladder/comb state and shared-secret zeroization | PASS for the named-owner boundary; direct and hybrid EVP lifecycle lanes are Valgrind-clean on both OpenSSL versions |
+| T6 | KEYEXCH/KEYMGMT EVP matrix in 3.5.7 and 4.0.1 | Historical pre-repair PASS; final read-only archive rerun required |
+| T7 | deterministic derive and poisoned-RAND split | Historical pre-repair PASS; final read-only archive rerun required |
+| T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | Historical pre-repair PASS; final read-only archive rerun required |
+| T9 | ML-KEM mutation, all-zero X301 and boundary mutations | Historical pre-repair PASS; final read-only archive rerun required |
+| T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | Historical pre-repair PASS; final read-only archive rerun required |
+| T11 | cover public derivation, signing, X301 key generation and ladder derive, each in defined and tainted mode | Required on the final read-only archive snapshot; its source-manifest digest is recorded with the run |
+| T12 | ladder/cswap/field and fixed-base key-generation disassembly gate | Required on both final provider modules; dynamic taint supplies the complementary secret-address check |
+| T13 | scalar, ladder state and shared-secret zeroization | Required for the named-owner boundary and direct/hybrid EVP lifecycle lanes on both OpenSSL versions |
 
 ### 10.1 Extended adversarial assurance
 
@@ -458,46 +453,34 @@ OpenSSL, never their X25519/X448 expected bytes.  Its expected X301 values
 come only from the independent Python oracle or from the contracts cited in
 each harness.  It adds no production dependency and no `unsafe` block.
 
-| Family | Frozen or executable coverage | Current status |
+| Family | Frozen or executable coverage | Retained evidence / required gate |
 | --- | --- | --- |
-| W1-W6 | 47 semantic cases plus 512 deterministic oracle-generated valid cases; generated JSON and C header reproduce byte-for-byte | PASS in Python, Rust and both EVP lanes |
-| O1-O2 | OpenSSL `evp_test`-format KAT, pairwise, missing-peer and wrong-peer cases | PASS: 36 native `evp_test` cases with zero errors on each lane; the raw-length grammar boundary is recorded as `X-O2` |
-| P1-P4 | 1,000 deterministic commutativity, birational, clamping and canonical-encoding cases | PASS in the release Rust gate; EVP commutativity and strict decoding are also exercised on both lanes |
-| M1-M6 | peer replacement, repeat derive, `dupctx`, re-init/key replacement, four-thread sharing and allocation/panic failure injection | PASS on both lanes; the four workers perform 1,000 derives per lane and the direct/hybrid lifecycle harnesses are Valgrind-clean |
-| R1-R7 | bidirectional cross-lane interop, HRR, 512-byte record fragmentation, fallback/no-common-group, 192 wire mutations per lane, foreign-size rejection and fresh resumption shares | PASS on both lanes and both cross-lane directions |
-| F1-F4 | complete declared structured fallback sweep because `cargo-fuzz` and AFL++ were unavailable | PASS per lane: 19,762 raw/decode/derive cases plus 35,338 hybrid-parser cases, all repeated with ASan+UBSan on the C provider boundary and harnesses |
+| W1-W6 | 47 semantic cases plus 512 deterministic oracle-generated valid cases; generated JSON and C header reproduce byte-for-byte | Core/oracle gate required; provider results are historical until the final rerun |
+| O1-O2 | OpenSSL `evp_test`-format KAT, pairwise, missing-peer and wrong-peer cases | Final dual-lane rerun required |
+| P1-P4 | 1,000 deterministic commutativity, birational, clamping and canonical-encoding cases | Final core and dual-lane rerun required |
+| M1-M6 | peer replacement, repeat derive, `dupctx`, re-init/key replacement, four-thread sharing and allocation/panic failure injection | Final dual-lane and Valgrind rerun required |
+| R1-R7 | bidirectional cross-lane interop, HRR, fragmentation, fallback, wire mutations, foreign-size rejection and fresh resumption shares | Final dual- and cross-lane rerun required |
+| F1-F4 | persisted coverage-guided Rust and provider/FFI fuzz targets plus the structured boundary sweeps | Required with corpus and exact run metadata; structured grids remain complementary, not a fuzzer substitute |
 | L1 | RFC-7748-shaped one-million iteration target with independently frozen output | PASS: Python oracle and release Rust core agree byte-for-byte on `14ab929a...52b9b00` |
-| L2 | 1,000 complete X301MLKEM1024 handshakes per lane plus six Valgrind reconnects per lane | PASS: 2,000 full handshakes and 12 Valgrind connections |
+| L2 | 1,000 complete MLKEM1024X301 handshakes per lane plus six Valgrind reconnects per lane | Historical pre-repair PASS; final long rerun required |
 
-F4's sanitizer claim is deliberately narrow: stable Rust has no supported
-whole-crate sanitizer switch.  The C shim, hybrid parser and C harness are
-instrumented; Rust/FFI memory and secret-flow coverage remains the independent
-Valgrind/T11 lane.  The deterministic F sweep is complete for its explicitly
-declared length, deletion, insertion, bit and byte-value grids; it is not a
-coverage-guided fuzzing claim.
+Stable Rust has no supported whole-crate sanitizer switch. The C shim, hybrid
+parser and C harness are instrumented; Rust/FFI memory and secret-flow coverage
+remains the independent Valgrind/T11 lane. The deterministic F sweep is
+complete for its declared grids but does not replace the persisted
+coverage-guided targets.
 
-The current core run has 44 default-feature tests. With `x301` enabled it
-registers 59 tests: 56 run in the ordinary debug/release matrix and the
-1,000-property, 10,000-case differential and 1,000,000-iteration tests are
-three explicitly ignored long lanes executed separately. The independent
-oracle has 12 ordinary tests plus the separate slow L1 recomputation. Each OpenSSL
-lane runs the raw-X301, hybrid, key-separation, state-machine, failure,
-structured-sweep and native ML-KEM data matrices with their individual counts
-recorded in the sealed result bundle.
-`fmt`, `clippy -D warnings`, rustdoc, both feature states, GCC `-fanalyzer`,
-Clang static analysis, final codegen and the materialized twist evidence in
-Section 8 pass. The final T11 run verifies the source tree before and after all
-ten Valgrind cases; T12 is bound to the two provider-module hashes.
+Exact test counts, toolchains, module hashes and results belong to the sealed
+result bundle for the final source-manifest digest. Pre-repair PASS logs are
+historical evidence only.
 
 ## 11. Simplicity and implementation limits
 
-The original X301 ladder, encoding and clamping target remains under 400
-source lines excluding tests. The requested repeated-derive accelerator is
-counted separately, and the combined figure is reported. The provider hybrid
-adapter target remains under 600 source lines excluding tests. The
-reproducible metric is nonblank, non-comment source lines: the wire core counts
-the production portion of `x301.rs` before its test module; accelerator
-additions are measured against commit `b3a9d1b`; the hybrid count is
+The X301 ladder, encoding and clamping target remains under 400 source lines
+excluding tests. The provider hybrid adapter target remains under 600 source
+lines excluding tests. The reproducible metric is nonblank, non-comment source
+lines: the wire core counts the production portion of `x301.rs` before its test
+helpers; the hybrid count is
 `hybrid_kem.c` plus all lines conditional on
 `X301_ENABLE_HYBRID_MLKEM1024` in `provider_shim.c`. Physical formatting and
 contract comments are never hidden. Exceeding the target is a review finding
@@ -514,20 +497,15 @@ The measured production counts are:
 
 | Surface | Physical lines | Nonblank, non-comment source lines | Budget |
 | --- | ---: | ---: | ---: |
-| X301 wire core before its test-only section | 347 | 214 | under 400 |
-| Prepared repeated-derive accelerator in the shared Edwards module | 377 added | 299 added | separately reported |
-| Combined X301-specific product surface | 724 | 513 | exceeds the original 400-line target by 113 source lines |
-| `hybrid_kem.c` | 703 | 635 | |
+| X301 wire core before its test-only section | 299 | 181 | under 400 |
+| `hybrid_kem.c` | 701 | 632 | |
 | hybrid-only blocks in `provider_shim.c` | 106 | 104 | |
-| Hybrid total | 809 | 739 | exceeds the 600-line target by 139 source lines |
+| Hybrid total | 807 | 736 | exceeds the 600-line target by 136 source lines |
 
-The combined X301 count is reported rather than hidden. The overrun is the
-cost of the owner-requested prepared-Derive target: simpler ladder, paired,
-width-4/5/6 and unregularized-comb candidates did not reach 1.56 times X25519.
-It requires explicit review and is not absorbed into the hybrid budget. The
-hybrid overrun is retained because the additional code gives each validation,
-allocation and component failure a specific provider error while keeping
-output assignment atomic and secret cleanup explicit. Removing those paths
-would reduce auditability without removing a mechanism. No ML-KEM, combiner,
-KDF, RNG or persistent hybrid format was added. Both surfaces MUST be
-recomputed whenever a counted product file changes.
+The repeated-peer accelerator was removed rather than hidden in a separate
+budget; one ladder now serves every derive. The hybrid overrun remains a review
+finding. Its current code gives each validation, allocation and component
+failure a specific provider error while keeping output assignment atomic and
+secret cleanup explicit. No ML-KEM, combiner, KDF, RNG or persistent hybrid
+format was added. Both surfaces MUST be recomputed whenever a counted product
+file changes.

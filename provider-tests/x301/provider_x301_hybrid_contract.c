@@ -1,8 +1,9 @@
 /*
- * Direct EVP contract tests for the TLS-only X301MLKEM1024 substrate (T9).
+ * Direct EVP contract tests for the TLS-only MLKEM1024X301 substrate (T9).
  *
  * Sources:
- *   - FIPS 203 through OpenSSL's default-provider ML-KEM-1024;
+ *   - FIPS 203 through the ML-KEM-1024 implementation selected by the child
+ *     library context;
  *   - RFC 10024 (ML-KEM-first key-share/shared-secret ordering);
  *   - RFC 9954 (hybrid TLS concatenation/failure model);
  *   - docs/X301_DRAFT.md sections 10-12;
@@ -30,7 +31,7 @@
 #define DEFAULT_PROPERTIES "provider=default"
 #define X301_NAME "X301"
 #define MLKEM_NAME "ML-KEM-1024"
-#define HYBRID_NAME "X301MLKEM1024"
+#define HYBRID_NAME "MLKEM1024X301"
 #define X301_BYTES 38U
 #define MLKEM_PUBLIC_BYTES 1568U
 #define MLKEM_CIPHERTEXT_BYTES 1568U
@@ -870,7 +871,7 @@ done:
     return result;
 }
 
-static int hybrid_fails_cleanly_without_default(const char *module_directory)
+static int hybrid_fails_cleanly_without_mlkem(const char *module_directory)
 {
     OSSL_LIB_CTX *libctx = NULL;
     OSSL_PROVIDER *null_provider = NULL;
@@ -921,6 +922,52 @@ done:
     return result;
 }
 
+static int hybrid_honors_child_default_properties(
+    const char *module_directory)
+{
+    OSSL_LIB_CTX *libctx = NULL;
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *null_provider = NULL;
+    OSSL_PROVIDER *x301 = NULL;
+    EVP_KEYMGMT *hybrid_keymgmt = NULL;
+    EVP_PKEY *generated = NULL;
+    int result = 0;
+
+    libctx = OSSL_LIB_CTX_new();
+    if (libctx == NULL
+            || OSSL_PROVIDER_set_default_search_path(
+                libctx, module_directory) <= 0
+            || (deflt = OSSL_PROVIDER_load(
+                    libctx, DEFAULT_PROVIDER)) == NULL
+            || (null_provider = OSSL_PROVIDER_load(
+                    libctx, "null")) == NULL
+            || (x301 = OSSL_PROVIDER_load(
+                    libctx, X301_PROVIDER)) == NULL
+            || EVP_set_default_properties(libctx, "provider=null") <= 0)
+        goto done;
+    hybrid_keymgmt = EVP_KEYMGMT_fetch(
+        libctx, HYBRID_NAME, X301_PROPERTIES);
+    if (hybrid_keymgmt == NULL
+            || OSSL_PROVIDER_available(libctx, DEFAULT_PROVIDER) != 1)
+        goto done;
+
+    ERR_clear_error();
+    generated = generate_hybrid(libctx);
+    if (generated != NULL)
+        goto done;
+    result = 1;
+
+done:
+    ERR_clear_error();
+    EVP_PKEY_free(generated);
+    EVP_KEYMGMT_free(hybrid_keymgmt);
+    OSSL_PROVIDER_unload(x301);
+    OSSL_PROVIDER_unload(null_provider);
+    OSSL_PROVIDER_unload(deflt);
+    OSSL_LIB_CTX_free(libctx);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_LIB_CTX *libctx = NULL;
@@ -932,6 +979,8 @@ int main(int argc, char **argv)
     EVP_KEM *own_ml_kem = NULL;
     EVP_KEYMGMT *hybrid_keymgmt = NULL;
     EVP_KEM *hybrid_kem = NULL;
+    EVP_KEYMGMT *legacy_keymgmt = NULL;
+    EVP_KEM *legacy_kem = NULL;
     EVP_PKEY *private_key = NULL;
     EVP_PKEY *public_key = NULL;
     EVP_PKEY *ml_public = NULL;
@@ -982,20 +1031,31 @@ int main(int argc, char **argv)
             || strcmp(OSSL_PROVIDER_get0_name(EVP_KEM_get0_provider(ml_kem)),
                 DEFAULT_PROVIDER) != 0
             || own_ml_keymgmt != NULL || own_ml_kem != NULL) {
-        fail("E1 ML-KEM-1024 comes only from the default provider");
+        fail("E1 normative lane ML-KEM-1024 is OpenSSL default-provider-owned");
         goto done;
     }
     ERR_clear_error();
-    pass("E1 ML-KEM-1024 comes only from the default provider");
+    pass("E1 normative lane ML-KEM-1024 is OpenSSL default-provider-owned");
 
     hybrid_keymgmt = EVP_KEYMGMT_fetch(
         libctx, HYBRID_NAME, X301_PROPERTIES);
     hybrid_kem = EVP_KEM_fetch(libctx, HYBRID_NAME, X301_PROPERTIES);
     if (hybrid_keymgmt == NULL || hybrid_kem == NULL) {
-        fail("fetch minimal X301MLKEM1024 KEYMGMT/KEM substrate");
+        fail("fetch minimal MLKEM1024X301 KEYMGMT/KEM substrate");
         goto done;
     }
-    pass("fetch minimal X301MLKEM1024 KEYMGMT/KEM substrate");
+    pass("fetch minimal MLKEM1024X301 KEYMGMT/KEM substrate");
+
+    legacy_keymgmt = EVP_KEYMGMT_fetch(
+        libctx, "X301MLKEM1024", X301_PROPERTIES);
+    legacy_kem = EVP_KEM_fetch(
+        libctx, "X301MLKEM1024", X301_PROPERTIES);
+    if (legacy_keymgmt != NULL || legacy_kem != NULL) {
+        fail("obsolete hybrid name is rejected");
+        goto done;
+    }
+    ERR_clear_error();
+    pass("obsolete hybrid name is rejected");
 
     private_key = generate_hybrid(libctx);
     if (private_key == NULL || !export_hybrid_public(private_key, public_bytes)) {
@@ -1131,11 +1191,17 @@ int main(int argc, char **argv)
     }
     pass("hybrid child-LIBCTX survives main-thread teardown before worker exit");
 
-    if (!hybrid_fails_cleanly_without_default(argv[1])) {
-        fail("hybrid keygen/import fail atomically without default provider");
+    if (!hybrid_fails_cleanly_without_mlkem(argv[1])) {
+        fail("hybrid keygen/import fail atomically without an ML-KEM provider");
         goto done;
     }
-    pass("hybrid keygen/import fail atomically without default provider");
+    pass("hybrid keygen/import fail atomically without an ML-KEM provider");
+
+    if (!hybrid_honors_child_default_properties(argv[1])) {
+        fail("hybrid ML-KEM fetch honors child default properties");
+        goto done;
+    }
+    pass("hybrid ML-KEM fetch honors child default properties");
 
     success = 1;
 
@@ -1149,7 +1215,9 @@ done:
     EVP_PKEY_free(public_key);
     EVP_PKEY_free(private_key);
     EVP_KEM_free(hybrid_kem);
+    EVP_KEM_free(legacy_kem);
     EVP_KEYMGMT_free(hybrid_keymgmt);
+    EVP_KEYMGMT_free(legacy_keymgmt);
     EVP_KEM_free(own_ml_kem);
     EVP_KEYMGMT_free(own_ml_keymgmt);
     EVP_KEM_free(ml_kem);

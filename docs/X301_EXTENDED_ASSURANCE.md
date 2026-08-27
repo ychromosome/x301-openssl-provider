@@ -3,8 +3,8 @@
 Date: 2026-08-25
 
 This lane is additive to T1-T13.  It adapts Wycheproof and OpenSSL test
-taxonomies to X301, exercises X301MLKEM1024 on the wire, and adds bounded
-fuzzing substitutes and long-running targets.  It does not alter the X301
+taxonomies to X301, exercises MLKEM1024X301 on the wire, and adds persisted
+coverage-guided fuzz and long-running targets.  It does not alter the X301
 byte contract, add production dependencies, or import X25519/X448 expected
 bytes.
 
@@ -32,7 +32,11 @@ X301_TLS_LONG_HANDSHAKES=1000 scripts/test-x301-tls.sh \
 read-only archive snapshot.  This prevents an authoritative gate from
 silently testing a writable or incomplete source tree.
 
-## Coverage and results
+## Historical coverage baseline
+
+The table below records the pre-repair baseline. It is not acceptance evidence
+for the current source bytes; every provider, TLS, sanitizer, Valgrind and long
+lane must be rerun from the final read-only archive.
 
 | Family | Executed contract | Result |
 | --- | --- | --- |
@@ -69,8 +73,25 @@ is the common 38-byte result, not timing.
 
 ## Fuzzing boundary
 
-Neither `cargo-fuzz` nor AFL++ was installed in the execution environment.
-The specified fallback was therefore selected, not silently weakened:
+The repository contains two coverage-guided libFuzzer targets:
+
+- `fuzz/fuzz_targets/x301_core.rs` covers arbitrary lengths, strict decoding,
+  clamping aliases, basepoint equivalence and DH commutativity; and
+- `provider-tests/x301/provider_x301_fuzz.c` covers raw KEYEXCH inputs, hybrid
+  public parsing, decapsulation output atomicity and context duplication.
+
+The provider fuzzer loads a test-only DSO whose final Rust FFI crate and C
+boundary objects carry sanitizer-coverage counters. Its harness uses ASan and
+UBSan on both normative OpenSSL lanes; the separate F4 gate instruments the
+provider's C boundary. The Rust-core target applies sanitizer coverage to the
+core and all target dependencies by using an explicit host target, while the
+upstream libFuzzer runtime supplies feedback. Stable Rust is covered
+separately by Valgrind, secret taint and final-binary codegen review; no
+unsupported Rust ASan claim is made. Seed corpora are tracked under
+`fuzz/corpus/`; evolving corpora and crash artifacts remain outside the
+verified source tree.
+
+The deterministic sweep remains as a complementary finite check:
 
 - raw X301 lengths 0 through 76;
 - every deletion and insertion position;
@@ -80,11 +101,9 @@ The specified fallback was therefore selected, not silently weakened:
 - every deletion and insertion position of both hybrid forms;
 - the frozen W corpus before each provider-entry sweep.
 
-This is complete for that finite grid.  It is not a claim of coverage-guided
-fuzzing or an arbitrary-input proof.  ASan/UBSan instrument the C provider
-boundary and harness. Stable Rust is covered separately by Valgrind, secret
-taint and final-binary codegen review; no unsupported Rust sanitizer claim is
-made.
+This is complete for that finite grid. Neither the finite grid nor bounded
+fuzzer runs are an arbitrary-input proof. A persisted coverage-guided TLS
+wire-state target and AArch64 runs remain open.
 
 ## Evidence boundary
 

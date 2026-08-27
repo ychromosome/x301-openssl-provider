@@ -3,11 +3,13 @@
 
 set -Eeuo pipefail
 
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+CARGO=$($ROOT/scripts/resolve-rust-tool.sh cargo)
+RUSTC=$($ROOT/scripts/resolve-rust-tool.sh rustc)
+RUST_BIN=$(dirname -- "$CARGO")
 PATH=/usr/bin:/bin
 export PATH LC_ALL=C
 umask 077
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 
 if test "$#" -ne 4; then
     printf 'usage: %s <3.5.7-lane-root> <3.5.7-evidence-sha256> <4.0.1-lane-root> <4.0.1-evidence-sha256>\n' \
@@ -51,18 +53,21 @@ record_run_identity() {
             docs/X301_DRAFT.md docs/X301_CONSTRUCTION_REGISTER.md \
             docs/X301_EXTENDED_ASSURANCE.md \
             docs/OPENSSL_PATTERN_DEVIATIONS.md docs/OID_REGISTRY.md \
+            fuzz/Cargo.toml fuzz/Cargo.lock fuzz/fuzz_targets fuzz/corpus \
             provider/Cargo.toml provider/Cargo.lock \
             provider/crates/x301-provider provider-tests/x301 reference/x301 \
             secret-taint/Cargo.toml secret-taint/src \
             scripts/check.sh scripts/check-secret-taint.sh \
             scripts/check-x301-final-codegen.sh scripts/check-x301-long.sh \
+            scripts/resolve-rust-tool.sh \
+            scripts/run-x301-fuzz.sh \
             scripts/test-x301-provider-contracts.sh scripts/test-x301-tls.sh \
             scripts/verify-openssl-provider-lane.sh \
             -type f -exec sha256sum {} + | sort -k2
     ) >"$RESULT_ROOT/X301_SOURCE_SHA256SUMS"
     {
-        /usr/bin/rustc --version --verbose
-        /usr/bin/cargo --version --verbose
+        "$RUSTC" --version --verbose
+        "$CARGO" --version --verbose
         /usr/bin/gcc --version
         /usr/bin/python3 --version
     } >"$RESULT_ROOT/TOOLCHAIN.txt" 2>&1
@@ -79,10 +84,11 @@ record_run_identity() {
         printf 'afl_plus_plus=%s\n' \
             "$(command -v afl-fuzz 2>/dev/null || printf NOT_INSTALLED)"
         printf '%s\n' \
-            'selected=complete_deterministic_structured_sweep' \
+            'selected=structured_sweep_plus_persisted_libfuzzer' \
             'raw_scope=lengths_0_76;all_delete_insert_positions;all_byte_values_at_all_38_positions' \
             'hybrid_scope=lengths_0_1607;all_bits;all_delete_insert_positions' \
             'semantic_seeds=frozen_W1_W6_plus_512_independent_oracle_cases' \
+            'coverage_gate=provider_x301_fuzz;20000_runs_per_lane;coverage_product_dso;asan_ubsan_harness;separate_f4_product_c_sanitizer' \
             'time_substitution=not_used_complete_defined_sweep_executed'
     } >"$RESULT_ROOT/FUZZING_STRATEGY.txt"
 }
@@ -95,10 +101,13 @@ run_lane() {
     local source=$lane_root/src/openssl-$lane
     local build=$RESULT_ROOT/$lane
     local target=$build/target
+    local failpoint_target=$build/target-failpoint
     local modules=$build/modules
     local failpoint_modules=$build/modules-failpoint
     local sanitizer_modules=$build/modules-sanitizer
     local sanitizer_target=$build/target-sanitizer
+    local fuzz_modules=$build/modules-fuzz-coverage
+    local fuzz_target=$build/target-fuzz-coverage
     local cargo_home=$build/cargo-home
     local data=$source/test/recipes/30-test_evp_data/evppkey_ml_kem_encap_decap.txt
     local x301_evp_data=$ROOT/provider-tests/x301/openssl_evp_x301.txt
@@ -113,8 +122,12 @@ run_lane() {
     test -f "$x301_evp_data"
     test -f "$x301_evp_config"
     mkdir -m 700 -p \
-        "$target" "$sanitizer_target" "$modules" "$failpoint_modules" \
-        "$sanitizer_modules" "$cargo_home" "$build/bin"
+        "$target" "$failpoint_target" "$sanitizer_target" "$fuzz_target" \
+        "$modules" "$failpoint_modules" \
+        "$sanitizer_modules" "$fuzz_modules" "$cargo_home" "$build/bin" \
+        "$build/provider-fuzz-corpus" "$build/provider-fuzz-artifacts"
+    cp "$ROOT"/fuzz/corpus/provider_x301/* \
+        "$build/provider-fuzz-corpus/"
 
     printf 'lane=%s\nprefix=%s\nsource=%s\nbuild=%s\n' \
         "$lane" "$prefix" "$source" "$build"
@@ -122,15 +135,16 @@ run_lane() {
 
     (
         cd "$ROOT/provider"
-        env -i PATH=/usr/bin:/bin HOME="$build" LC_ALL=C \
+        env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
             CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
             CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            RUSTC="$RUSTC" \
             CC=/usr/bin/gcc AR=/usr/bin/ar \
             X301_HERMETIC_PROVIDER_BUILD=1 \
             OPENSSL_INCLUDE_DIR="$prefix/include" \
             OPENSSL_LIB_DIR="$prefix/lib" \
             LD_LIBRARY_PATH="$prefix/lib" \
-            /usr/bin/cargo build --release --locked --offline \
+            "$CARGO" build --release --locked --offline \
                 -p x301-provider --features tls-x301-mlkem1024
     )
     cp "$target/release/libx301.so" "$modules/x301.so"
@@ -140,15 +154,16 @@ run_lane() {
     # operation context.  No PKI/TLS/test-only Ed301 feature is enabled.
     (
         cd "$ROOT/provider"
-        env -i PATH=/usr/bin:/bin HOME="$build" LC_ALL=C \
+        env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
             CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
             CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            RUSTC="$RUSTC" \
             CC=/usr/bin/gcc AR=/usr/bin/ar \
             ED301_HERMETIC_PROVIDER_BUILD=1 \
             OPENSSL_INCLUDE_DIR="$prefix/include" \
             OPENSSL_LIB_DIR="$prefix/lib" \
             LD_LIBRARY_PATH="$prefix/lib" \
-            /usr/bin/cargo build --release --locked --offline \
+            "$CARGO" build --release --locked --offline \
                 -p ed301-eddsa-provider
     )
     cp "$target/release/libed301_eddsa_draft00.so" \
@@ -158,19 +173,20 @@ run_lane() {
     # ordinary module must remain byte-free of both environment-hook names.
     (
         cd "$ROOT/provider"
-        env -i PATH=/usr/bin:/bin HOME="$build" LC_ALL=C \
-            CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
+        env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
+            CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$failpoint_target" \
             CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            RUSTC="$RUSTC" \
             CC=/usr/bin/gcc AR=/usr/bin/ar \
             X301_HERMETIC_PROVIDER_BUILD=1 \
             OPENSSL_INCLUDE_DIR="$prefix/include" \
             OPENSSL_LIB_DIR="$prefix/lib" \
             LD_LIBRARY_PATH="$prefix/lib" \
-            /usr/bin/cargo build --release --locked --offline \
+            "$CARGO" build --release --locked --offline \
                 -p x301-provider \
                 --features tls-x301-mlkem1024,test-failpoint
     )
-    cp "$target/release/libx301.so" "$failpoint_modules/x301.so"
+    cp "$failpoint_target/release/libx301.so" "$failpoint_modules/x301.so"
     if /usr/bin/strings "$modules/x301.so" \
             | grep -E 'X301_PROVIDER_(PANIC|ALLOC)_FAILPOINT' >/dev/null; then
         printf 'ordinary X301 module contains a test failpoint hook\n' >&2
@@ -186,15 +202,16 @@ run_lane() {
     # the Rust core is covered independently by Valgrind and T11 taint.
     (
         cd "$ROOT/provider"
-        env -i PATH=/usr/bin:/bin HOME="$build" LC_ALL=C \
+        env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
             CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$sanitizer_target" \
             CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            RUSTC="$RUSTC" \
             CC=/usr/bin/gcc AR=/usr/bin/ar \
             X301_HERMETIC_PROVIDER_BUILD=1 \
             OPENSSL_INCLUDE_DIR="$prefix/include" \
             OPENSSL_LIB_DIR="$prefix/lib" \
             LD_LIBRARY_PATH="$prefix/lib" \
-            /usr/bin/cargo build --release --locked --offline \
+            "$CARGO" build --release --locked --offline \
                 -p x301-provider \
                 --features tls-x301-mlkem1024,test-sanitizer
     )
@@ -211,6 +228,34 @@ run_lane() {
     grep -E ' U __asan_init' "$build/sanitizer-provider.nm.txt" >/dev/null
     grep -E ' U __ubsan_handle_' "$build/sanitizer-provider.nm.txt" \
         >/dev/null
+
+    # H-04 product-code coverage lane. The final Rust provider crate and both
+    # C boundary objects carry sanitizer-coverage counters; the libFuzzer
+    # executable supplies their callbacks when it loads this test-only DSO.
+    (
+        cd "$ROOT/provider"
+        env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
+            CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$fuzz_target" \
+            CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
+            RUSTC="$RUSTC" \
+            CC=/usr/bin/clang AR=/usr/bin/ar \
+            X301_HERMETIC_PROVIDER_BUILD=1 \
+            OPENSSL_INCLUDE_DIR="$prefix/include" \
+            OPENSSL_LIB_DIR="$prefix/lib" \
+            LD_LIBRARY_PATH="$prefix/lib" \
+            "$CARGO" rustc --release --locked --offline \
+                -p x301-provider \
+                --features tls-x301-mlkem1024,test-fuzz-coverage \
+                -- \
+                -C passes=sancov-module \
+                -C llvm-args=-sanitizer-coverage-level=3 \
+                -C llvm-args=-sanitizer-coverage-inline-8bit-counters \
+                -C llvm-args=-sanitizer-coverage-pc-table
+    )
+    cp "$fuzz_target/release/libx301.so" "$fuzz_modules/x301.so"
+    /usr/bin/nm -D "$fuzz_modules/x301.so" \
+        >"$build/fuzz-provider.nm.txt"
+    grep -E ' U __sanitizer_cov_' "$build/fuzz-provider.nm.txt" >/dev/null
 
     /usr/bin/gcc -std=c11 -Wall -Wextra -Werror -pthread \
         -I"$prefix/include" \
@@ -236,6 +281,12 @@ run_lane() {
             -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
             -o "$build/bin/${harness}_sanitizer"
     done
+    /usr/bin/clang -std=c11 -Wall -Wextra -Werror \
+        -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -g \
+        -I"$prefix/include" \
+        "$ROOT/provider-tests/x301/provider_x301_fuzz.c" \
+        -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
+        -o "$build/bin/provider_x301_fuzz"
 
     # Seal every executable input before the first provider or harness use.
     # The same manifest is checked again after all runtime and analyzer lanes.
@@ -245,11 +296,13 @@ run_lane() {
             modules/x301.so \
             modules-failpoint/x301.so \
             modules-sanitizer/x301.so \
+            modules-fuzz-coverage/x301.so \
             modules/ed301_eddsa_draft00.so \
             bin/provider_x301_contract \
             bin/provider_x301_hybrid_contract \
             bin/provider_x301_contract_sanitizer \
             bin/provider_x301_hybrid_contract_sanitizer \
+            bin/provider_x301_fuzz \
             bin/provider_x301_key_separation >PREUSE_SHA256SUMS
         sha256sum --strict --quiet -c PREUSE_SHA256SUMS
     )
@@ -317,6 +370,25 @@ run_lane() {
             2>&1 | tee "$build/f4-${harness}-asan-ubsan.log"
     done
 
+    # H-04: coverage-guided mutation of raw KEYEXCH, hybrid public parsing,
+    # decapsulation atomicity and context duplication.  The tracked corpus is
+    # copied because the verified source snapshot remains read-only.
+    env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        X301_FUZZ_MODULE_DIR="$fuzz_modules" \
+        LD_LIBRARY_PATH="$prefix/lib" \
+        ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1 \
+        UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+        ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer \
+        "$build/bin/provider_x301_fuzz" \
+        -runs=20000 -max_len=4096 -timeout=20 \
+        -artifact_prefix="$build/provider-fuzz-artifacts/" \
+        "$build/provider-fuzz-corpus" \
+        2>&1 | tee "$build/h04-provider-libfuzzer.log"
+    (
+        cd "$build/provider-fuzz-corpus"
+        find . -type f -print0 | sort -z | xargs -0 sha256sum
+    ) >"$build/provider-fuzz-corpus.sha256"
+
     # O1/O2: execute the X301 raw-key, pairwise, misuse and exact-derive
     # contracts through the normative lane's unmodified evp_test runner.
     env -i PATH=/usr/bin:/bin LC_ALL=C \
@@ -348,21 +420,25 @@ run_lane() {
             modules/x301.so \
             modules-failpoint/x301.so \
             modules-sanitizer/x301.so \
+            modules-fuzz-coverage/x301.so \
             modules/ed301_eddsa_draft00.so \
             bin/provider_x301_contract \
             bin/provider_x301_hybrid_contract \
             bin/provider_x301_contract_sanitizer \
             bin/provider_x301_hybrid_contract_sanitizer \
+            bin/provider_x301_fuzz \
             bin/provider_x301_key_separation \
             PREUSE_SHA256SUMS \
             provider_x301_contract-valgrind.log \
             provider_x301_hybrid_contract-valgrind.log \
+            h04-provider-libfuzzer.log \
+            provider-fuzz-corpus.sha256 \
             inputs/openssl-evp-pkey.txt \
             inputs/openssl-evp-x301.txt \
             inputs/openssl-evp-x301.cnf >SHA256SUMS
         sha256sum --strict --quiet -c SHA256SUMS
     )
-    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS\n' \
+    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS h04_libfuzzer=PASS\n' \
         "$lane" "$lane_evidence" \
         | tee "$build/STATUS.txt"
 }

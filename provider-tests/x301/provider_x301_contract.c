@@ -1485,10 +1485,10 @@ int main(int argc, char **argv)
     pass("M1/M2 second peer wins and repeated derive is stable");
 
     if (!duplicated_context_is_independent(libctx, private_a, public_b)) {
-        fail("M3 dupctx preserves independent prepared derive state");
+        fail("M3 dupctx preserves independent derive state");
         goto done;
     }
-    pass("M3 dupctx preserves independent prepared derive state");
+    pass("M3 dupctx preserves independent derive state");
 
     if (!reinitialization_clears_peer(
             libctx, private_a, private_b, public_a, public_b)) {

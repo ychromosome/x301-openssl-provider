@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-description = "Experimental raw X301 provider with optional TLS X301MLKEM1024 integration"
+description = "Experimental raw X301 provider with optional TLS MLKEM1024X301 integration"
 build = "build.rs"
 autobins = false
 autoexamples = false
@@ -20,6 +20,7 @@ path = "src/lib.rs"
 [features]
 default = []
 test-failpoint = []
+test-fuzz-coverage = []
 test-sanitizer = []
 tls-x301-mlkem1024 = []
 

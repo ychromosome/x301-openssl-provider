@@ -10,8 +10,6 @@
 )]
 
 use crypto_bigint::Choice;
-#[cfg(feature = "x301")]
-use zeroize::Zeroize;
 
 use crate::{
     field_5x64::Fe301 as FieldElement,
@@ -30,26 +28,8 @@ const BASEPOINT_WNAF_WIDTH: u32 = 8;
 const POINT_WNAF_WIDTH: u32 = 8;
 const BASEPOINT_ODD_MULTIPLES: usize = 1 << (BASEPOINT_WNAF_WIDTH - 2);
 const POINT_ODD_MULTIPLES: usize = 1 << (POINT_WNAF_WIDTH - 2);
-#[cfg(feature = "x301")]
-const X301_COMB_WIDTH: usize = 5;
-#[cfg(feature = "x301")]
-const X301_COMB_ROWS: usize = FIELD_BITS.div_ceil(X301_COMB_WIDTH);
-#[cfg(feature = "x301")]
-const X301_COMB_DIGITS: usize = X301_COMB_ROWS * X301_COMB_WIDTH;
-#[cfg(feature = "x301")]
-const X301_COMB_ENTRIES: usize = 1 << (X301_COMB_WIDTH - 1);
 
 pub(crate) type VartimePointTable = [AffineNielsPoint; POINT_ODD_MULTIPLES];
-
-/// Public-peer fixed-base comb table used by prepared X301 derivation.
-///
-/// This applies the Lim-Lee fixed-base comb and the signed all-bit-set schedule
-/// of Hedabou, Pinel and Beneteau to a caller-supplied public point. Table
-/// construction may be variable-time; multiplication scans every entry with
-/// constant-time conditional selects.
-#[cfg(feature = "x301")]
-#[derive(Clone)]
-pub(crate) struct X301PreparedComb([X301AffinePoint; X301_COMB_ENTRIES]);
 
 /// Canonical compressed encoding of the ED301-v1 base point.
 pub(crate) const BASEPOINT_ENCODING: [u8; FIELD_BYTES] = [
@@ -123,149 +103,6 @@ pub(crate) struct AffineNielsPoint {
     y: FieldElement,
     xy: FieldElement,
     dt: FieldElement,
-}
-
-// ED301 has a = 45677^2.  Scaling X and T by 45677 gives an isomorphic
-// a = 1 model while preserving Y, Z and therefore the Montgomery u-coordinate.
-// This representation is private to the prepared X301 comb and reuses the
-// same field backend and complete Edwards formulas.
-#[cfg(feature = "x301")]
-const X301_X_SCALE: u32 = 45_677;
-#[cfg(feature = "x301")]
-const X301_EDWARDS_D: FieldElement = FieldElement::from_canonical_words([
-    0x67e7_b600_317d_25d6,
-    0x2f75_3aea_cee9_62c2,
-    0x3f95_1679_b4c2_ad35,
-    0x93fb_1255_b918_338d,
-    0x0000_18d9_9ee2_a8ce,
-]);
-
-#[cfg(feature = "x301")]
-#[derive(Clone, Copy)]
-pub(crate) struct X301CombPoint {
-    x: FieldElement,
-    y: FieldElement,
-    z: FieldElement,
-    t: FieldElement,
-}
-
-#[cfg(feature = "x301")]
-#[derive(Clone, Copy)]
-struct X301AffinePoint {
-    x: FieldElement,
-    y: FieldElement,
-    dt: FieldElement,
-}
-
-#[cfg(feature = "x301")]
-impl X301AffinePoint {
-    const IDENTITY: Self = Self {
-        x: FieldElement::ZERO,
-        y: FieldElement::ONE,
-        dt: FieldElement::ZERO,
-    };
-
-    fn from_projective(point: X301CombPoint, inverse_z: FieldElement) -> Self {
-        let x = point.x.mul(inverse_z);
-        let y = point.y.mul(inverse_z);
-        Self {
-            x,
-            y,
-            dt: x.mul(y).mul(X301_EDWARDS_D),
-        }
-    }
-
-    fn conditional_select(when_false: Self, when_true: Self, choice: Choice) -> Self {
-        Self {
-            x: FieldElement::conditional_select(when_false.x, when_true.x, choice),
-            y: FieldElement::conditional_select(when_false.y, when_true.y, choice),
-            dt: FieldElement::conditional_select(when_false.dt, when_true.dt, choice),
-        }
-    }
-}
-
-#[cfg(feature = "x301")]
-impl X301CombPoint {
-    const IDENTITY: Self = Self {
-        x: FieldElement::ZERO,
-        y: FieldElement::ONE,
-        z: FieldElement::ONE,
-        t: FieldElement::ZERO,
-    };
-
-    fn from_edwards(point: EdwardsPoint) -> Self {
-        Self {
-            x: point.x.mul_small(X301_X_SCALE),
-            y: point.y,
-            z: point.z,
-            t: point.t.mul_small(X301_X_SCALE),
-        }
-    }
-
-    fn add(self, rhs: Self) -> Self {
-        let xx = self.x.mul(rhs.x);
-        let yy = self.y.mul(rhs.y);
-        let dt = self.t.mul(X301_EDWARDS_D).mul(rhs.t);
-        let zz = self.z.mul(rhs.z);
-        let cross = self.x.add(self.y).mul(rhs.x.add(rhs.y)).sub(xx).sub(yy);
-        let difference = zz.sub(dt);
-        let sum = zz.add(dt);
-        let twisted = yy.sub(xx);
-        Self {
-            x: cross.mul(difference),
-            y: sum.mul(twisted),
-            z: difference.mul(sum),
-            t: cross.mul(twisted),
-        }
-    }
-
-    fn double(self) -> Self {
-        let xx = self.x.square();
-        let yy = self.y.square();
-        let zz = self.z.square();
-        let cross = self.x.add(self.y).square().sub(xx).sub(yy);
-        let sum = xx.add(yy);
-        let difference = sum.sub(zz.add(zz));
-        let twisted_difference = xx.sub(yy);
-        Self {
-            x: cross.mul(difference),
-            y: sum.mul(twisted_difference),
-            z: difference.mul(sum),
-            t: cross.mul(twisted_difference),
-        }
-    }
-
-    fn negate(self) -> Self {
-        Self {
-            x: self.x.neg(),
-            y: self.y,
-            z: self.z,
-            t: self.t.neg(),
-        }
-    }
-
-    // The comb always doubles before the next mixed addition.  Doubling does
-    // not consume T, and final X301 conversion consumes only Y and Z, so this
-    // specialized mixed add deliberately omits the otherwise dead T product.
-    fn add_affine_x301(self, rhs: X301AffinePoint) -> Self {
-        let xx = self.x.mul(rhs.x);
-        let yy = self.y.mul(rhs.y);
-        let dt = self.t.mul(rhs.dt);
-        let cross = self.x.add(self.y).mul(rhs.x.add(rhs.y)).sub(xx).sub(yy);
-        let difference = self.z.sub(dt);
-        let sum = self.z.add(dt);
-        let twisted = yy.sub(xx);
-        Self {
-            x: cross.mul(difference),
-            y: sum.mul(twisted),
-            z: difference.mul(sum),
-            t: FieldElement::ZERO,
-        }
-    }
-
-    pub(crate) fn montgomery_projective(self) -> (FieldElement, FieldElement) {
-        (self.z.add(self.y), self.z.sub(self.y))
-    }
 }
 
 impl AffineNielsPoint {
@@ -494,97 +331,6 @@ impl EdwardsPoint {
     /// `2^300 <= s < 2^301` and is consumed in exactly 301 rounds.
     pub(crate) fn scalar_mul_pruned(self, scalar: &[u8; FIELD_BYTES]) -> Self {
         self.scalar_mul_encoded(scalar)
-    }
-
-    /// Prepare a public point using the registered X-PREP fixed-base comb.
-    #[cfg(feature = "x301")]
-    pub(crate) fn prepare_x301_comb(self) -> X301PreparedComb {
-        let mut columns = [X301CombPoint::IDENTITY; X301_COMB_WIDTH];
-        // D3 clears two low scalar bits.  Preparing 4P lets the runtime comb
-        // consume m = k/4 in the odd-order subgroup and add L to m when an
-        // odd representative is required by the regular signed recoding.
-        columns[0] = X301CombPoint::from_edwards(self).double().double();
-        let mut column = 1;
-        while column < X301_COMB_WIDTH {
-            let mut next = columns[column - 1];
-            let mut doubling = 0;
-            while doubling < X301_COMB_ROWS {
-                next = next.double();
-                doubling += 1;
-            }
-            columns[column] = next;
-            column += 1;
-        }
-
-        let mut projective = [X301CombPoint::IDENTITY; X301_COMB_ENTRIES];
-        let mut index = 0_usize;
-        while index < X301_COMB_ENTRIES {
-            let mut point = columns[0];
-            let mut column = 1;
-            while column < X301_COMB_WIDTH {
-                let addend = if ((index >> (column - 1)) & 1) != 0 {
-                    columns[column]
-                } else {
-                    columns[column].negate()
-                };
-                point = point.add(addend);
-                column += 1;
-            }
-            projective[index] = point;
-            index += 1;
-        }
-        X301PreparedComb(batch_normalize_x301(projective))
-    }
-
-    /// Multiply a prepared public X301 point by an exact pruned scalar.
-    ///
-    /// The five-bit signed comb consumes 305 regular digits in 61 fixed
-    /// rounds. Every round scans all 16 public table entries before one
-    /// complete mixed addition, so control flow and memory addresses do not
-    /// depend on the secret scalar.
-    #[cfg(feature = "x301")]
-    #[inline(never)]
-    pub(crate) fn scalar_mul_x301_comb(
-        scalar: &[u8; FIELD_BYTES],
-        prepared: &X301PreparedComb,
-    ) -> X301CombPoint {
-        let digits = x301_regular_signed_digits(scalar);
-        let mut result = X301CombPoint::IDENTITY;
-        let mut row = X301_COMB_ROWS;
-        while row != 0 {
-            row -= 1;
-            result = result.double();
-
-            let leading = digits[row];
-            let mut digit = 0_u8;
-            let mut column = 1;
-            while column < X301_COMB_WIDTH {
-                let relative =
-                    Choice::from_u8_eq(leading as u8, digits[row + column * X301_COMB_ROWS] as u8);
-                digit |= relative.to_u8() << (column - 1);
-                column += 1;
-            }
-
-            let mut selected = X301AffinePoint::IDENTITY;
-            let mut entry = 0;
-            while entry < X301_COMB_ENTRIES {
-                selected = X301AffinePoint::conditional_select(
-                    selected,
-                    prepared.0[entry],
-                    Choice::from_u8_eq(digit, entry as u8),
-                );
-                entry += 1;
-            }
-            let negative = Choice::from_u8_lsb((leading as u8) >> 7);
-            let negated = X301AffinePoint {
-                x: selected.x.neg(),
-                y: selected.y,
-                dt: selected.dt.neg(),
-            };
-            selected = X301AffinePoint::conditional_select(selected, negated, negative);
-            result = result.add_affine_x301(selected);
-        }
-        result
     }
 
     /// Multiply the fixed base point by a canonical secret scalar.
@@ -929,26 +675,6 @@ impl EdwardsPoint {
     }
 }
 
-#[cfg(feature = "x301")]
-impl Zeroize for EdwardsPoint {
-    fn zeroize(&mut self) {
-        self.x.zeroize();
-        self.y.zeroize();
-        self.z.zeroize();
-        self.t.zeroize();
-    }
-}
-
-#[cfg(feature = "x301")]
-impl Zeroize for X301CombPoint {
-    fn zeroize(&mut self) {
-        self.x.zeroize();
-        self.y.zeroize();
-        self.z.zeroize();
-        self.t.zeroize();
-    }
-}
-
 const fn build_basepoint_table() -> [AffineNielsPoint; BASEPOINT_TABLE_SIZE] {
     let mut projective = [EdwardsPoint::IDENTITY; BASEPOINT_TABLE_SIZE];
     let mut row_base = EdwardsPoint::BASEPOINT;
@@ -1043,28 +769,6 @@ fn batch_normalize<const N: usize>(points: [EdwardsPoint; N]) -> [AffineNielsPoi
     output
 }
 
-#[cfg(feature = "x301")]
-fn batch_normalize_x301<const N: usize>(points: [X301CombPoint; N]) -> [X301AffinePoint; N] {
-    let mut prefixes = [FieldElement::ONE; N];
-    let mut product = FieldElement::ONE;
-    let mut index = 0;
-    while index < N {
-        prefixes[index] = product;
-        product = product.mul(points[index].z);
-        index += 1;
-    }
-    let mut inverse = product.invert().to_inner_unchecked();
-    let mut output = [X301AffinePoint::IDENTITY; N];
-    index = N;
-    while index != 0 {
-        index -= 1;
-        let inverse_z = inverse.mul(prefixes[index]);
-        inverse = inverse.mul(points[index].z);
-        output[index] = X301AffinePoint::from_projective(points[index], inverse_z);
-    }
-    output
-}
-
 fn vartime_add_signed<const N: usize>(
     accumulator: EdwardsPoint,
     digit: i8,
@@ -1080,87 +784,6 @@ fn vartime_add_signed<const N: usize>(
         addend = addend.negate();
     }
     accumulator.add_affine(addend)
-}
-
-#[cfg(feature = "x301")]
-#[inline(never)]
-fn x301_regular_signed_digits(
-    scalar: &[u8; FIELD_BYTES],
-) -> crate::secret::Secret<[i8; X301_COMB_DIGITS]> {
-    const ORDER_WORDS: [u64; 5] = [
-        0x2602_e3a1_d0be_9603,
-        0x0892_8098_47fb_4a31,
-        0x0000_0000_0016_dcc8,
-        0x0000_0000_0000_0000,
-        0x0000_0800_0000_0000,
-    ];
-
-    let mut encoded = [0_u64; 5];
-    let mut index = 0;
-    while index < 4 {
-        let mut word = [0_u8; 8];
-        word.copy_from_slice(&scalar[index * 8..index * 8 + 8]);
-        encoded[index] = u64::from_le_bytes(word);
-        index += 1;
-    }
-    let mut top = [0_u8; 8];
-    top[..FIELD_BYTES - 32].copy_from_slice(&scalar[32..]);
-    encoded[4] = u64::from_le_bytes(top);
-
-    // k is divisible by four.  Work with m = k/4 and Q = 4P.  If m is
-    // even, add the odd prime subgroup order L so the represented point is
-    // unchanged while the regular +/-1 recoding receives an odd integer.
-    let mut word = 0;
-    while word < 4 {
-        encoded[word] = (encoded[word] >> 2) | (encoded[word + 1] << 62);
-        word += 1;
-    }
-    encoded[4] >>= 2;
-    let add_order = (encoded[0] & 1) ^ 1;
-    let order_mask = 0_u64.wrapping_sub(add_order);
-    let mut carry = 0_u64;
-    word = 0;
-    while word < encoded.len() {
-        let sum = encoded[word] as u128 + (ORDER_WORDS[word] & order_mask) as u128 + carry as u128;
-        encoded[word] = sum as u64;
-        carry = (sum >> 64) as u64;
-        word += 1;
-    }
-
-    let mut digits = crate::secret::secret([0_i8; X301_COMB_DIGITS]);
-    index = 0;
-    while index + 1 < X301_COMB_DIGITS {
-        let positive = ((encoded[0] >> 1) & 1) as i8;
-        let digit = positive.wrapping_mul(2).wrapping_sub(1);
-        digits[index] = digit;
-
-        // Add one for digit -1 or add -1 modulo 2^320 for digit +1, then
-        // divide by two.  Both paths execute the same five-limb schedule.
-        let negative = ((digit as u8) >> 7) as u64;
-        let subtract_mask = 0_u64.wrapping_sub(negative ^ 1);
-        carry = 0;
-        word = 0;
-        while word < encoded.len() {
-            let addend = if word == 0 {
-                subtract_mask | negative
-            } else {
-                subtract_mask
-            };
-            let sum = encoded[word] as u128 + addend as u128 + carry as u128;
-            encoded[word] = sum as u64;
-            carry = (sum >> 64) as u64;
-            word += 1;
-        }
-        word = 0;
-        while word < encoded.len() - 1 {
-            encoded[word] = (encoded[word] >> 1) | (encoded[word + 1] << 63);
-            word += 1;
-        }
-        encoded[4] >>= 1;
-        index += 1;
-    }
-    digits[X301_COMB_DIGITS - 1] = 1;
-    digits
 }
 
 fn signed_radix16(scalar: &[u8; FIELD_BYTES]) -> crate::secret::Secret<[i8; RADIX16_DIGITS]> {

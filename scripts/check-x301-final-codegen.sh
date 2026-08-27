@@ -58,8 +58,6 @@ LOOP=$EVIDENCE/x301-ladder-loop.asm
 PUBLIC=$EVIDENCE/x301-public-from-secret.asm
 BASE_SELECT=$EVIDENCE/x301-basepoint-select.asm
 AFFINE_SELECT=$EVIDENCE/x301-affine-select.asm
-COMB=$EVIDENCE/x301-prepared-comb.asm
-COMB_DIGITS=$EVIDENCE/x301-prepared-comb-digits.asm
 SUMMARY=$EVIDENCE/summary.txt
 PUBLIC_CALLS=$EVIDENCE/x301-public-from-secret-calls.txt
 /usr/bin/objdump -d -C --no-show-raw-insn --disassemble-zeroes --wide \
@@ -362,55 +360,6 @@ test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x4a,' "$PUBLIC")" -eq 2
 printf 'PASS x301_keygen=fixed-base base_select_sites=%s affine_add_sites=%s double_sites=%s inversion_sites=%s\n' \
     "$base_select_calls" "$affine_add_calls" "$double_calls" "$invert_calls" \
     | tee -a "$SUMMARY"
-
-# Prepared derive uses regular signed five-bit comb recoding. The only
-# conditional edges are fixed public loop counters: 304 recoding steps, 16
-# full-scan table entries, 61 comb rows, and the normal/unwind zeroization
-# loops. Secret-taint independently verifies that the scalar cannot influence
-# branch decisions or addresses.
-extract_symbol \
-    'ed301_eddsa::edwards::EdwardsPoint::scalar_mul_x301_comb' "$COMB"
-extract_symbol 'ed301_eddsa::edwards::x301_regular_signed_digits' \
-    "$COMB_DIGITS"
-for section in "$COMB" "$COMB_DIGITS"; do
-    if /usr/bin/awk '
-        /^[[:space:]]*[[:xdigit:]]+:/ &&
-                ($2 ~ /^loop/ || $2 ~ /^div/ || $2 ~ /^idiv/ ||
-                 $2 == "ud2" || $2 == "int3" || $2 ~ /^jmp/) {
-            print
-            bad = 1
-        }
-        END { exit bad ? 0 : 1 }
-    ' "$section"; then
-        echo "forbidden prepared-comb instruction" >&2
-        exit 1
-    fi
-done
-test "$(/usr/bin/awk '
-    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { count++ }
-    END { print count + 0 }
-' "$COMB_DIGITS")" -eq 1
-/usr/bin/grep -Eq \
-    'cmp[[:space:]]+\$0x130,%rbp' "$COMB_DIGITS"
-test "$(/usr/bin/awk '
-    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { count++ }
-    END { print count + 0 }
-' "$COMB")" -eq 4
-test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x10,%' "$COMB")" -eq 1
-test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x131,' "$COMB")" -eq 2
-test "$(/usr/bin/grep -c 'mov[[:space:]]\+\$0x3d,%' "$COMB")" -eq 1
-/usr/bin/awk '
-    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { print }
-' "$COMB" >"$EVIDENCE/x301-prepared-comb-branches.txt"
-/usr/bin/awk '
-    /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
-            $2 !~ /^lea/ && index($0, "nop") == 0 { print }
-' "$COMB" >"$EVIDENCE/x301-prepared-comb-indexed-memory.txt"
-test "$(/usr/bin/awk 'END { print NR + 0 }' \
-        "$EVIDENCE/x301-prepared-comb-indexed-memory.txt")" -eq 7
-printf '%s\n' \
-    'PASS x301_prepared_comb=regular-signed width=5 rows=61 table_scan=16' \
-    'PASS x301_prepared_comb_secret_taint_gate=required' | tee -a "$SUMMARY"
 
 # Checker negative control: a synthetic conditional edge must be rejected.
 NEGATIVE=$EVIDENCE/negative-control.asm

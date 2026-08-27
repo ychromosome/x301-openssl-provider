@@ -2,8 +2,9 @@
 
 Date of integration selection: 2026-08-25.
 
-This directory materializes the minimal final c44730 evidence selected for the
-X301 curve/twist review. It is an evidence subset, not a complete copy of the
+This directory preserves the earlier minimal c44730 subset. The complete
+manifest-bound package now lives at `../curve-provenance/`; new provenance
+claims must use that package. This directory is not a complete copy of the
 historical `ed301_technischer_abschluss` tree, not a standards publication and
 not a production approval. The current X301 contract is
 `../../docs/X301_DRAFT.md`; protocol statements in the historical reports do

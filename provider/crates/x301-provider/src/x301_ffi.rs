@@ -6,15 +6,11 @@
 
 use core::ffi::{c_int, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicBool, Ordering},
-};
 
 use crypto_bigint::CtEq;
 use ed301_eddsa::x301::{
-    PUBLIC_BYTES, PreparedX301Peer, SECRET_BYTES, SHARED_BYTES, prepare_peer, public_from_secret,
-    shared_secret, shared_secret_prepared, validate_public_encoding,
+    PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, public_from_secret, shared_secret,
+    validate_public_encoding,
 };
 use zeroize::Zeroize;
 
@@ -101,27 +97,10 @@ struct X301Key {
     public: Option<[u8; PUBLIC_BYTES]>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct X301Exchange {
     private: Option<SecretBytes>,
     peer_public: Option<[u8; PUBLIC_BYTES]>,
-    prepared_peer: OnceLock<PreparedX301Peer>,
-    derived_once: AtomicBool,
-}
-
-impl Clone for X301Exchange {
-    fn clone(&self) -> Self {
-        let prepared_peer = OnceLock::new();
-        if let Some(prepared) = self.prepared_peer.get() {
-            let _ = prepared_peer.set(prepared.clone());
-        }
-        Self {
-            private: self.private.clone(),
-            peer_public: self.peer_public,
-            prepared_peer,
-            derived_once: AtomicBool::new(self.derived_once.load(Ordering::Relaxed)),
-        }
-    }
 }
 
 #[cfg(feature = "test-failpoint")]
@@ -512,8 +491,6 @@ unsafe extern "C" fn exchange_init(exchange: *mut c_void, key: *const c_void) ->
         *exchange = X301Exchange {
             private: Some(private),
             peer_public: None,
-            prepared_peer: OnceLock::new(),
-            derived_once: AtomicBool::new(false),
         };
         1
     })
@@ -539,8 +516,6 @@ unsafe extern "C" fn exchange_set_peer(exchange: *mut c_void, peer: *const c_voi
             return 0;
         }
         exchange.peer_public = Some(public);
-        exchange.prepared_peer = OnceLock::new();
-        exchange.derived_once.store(false, Ordering::Relaxed);
         1
     })
 }
@@ -561,30 +536,8 @@ unsafe extern "C" fn exchange_derive(
         else {
             return 0;
         };
-        let shared = if !exchange.derived_once.swap(true, Ordering::Relaxed) {
-            // Keep one-shot/TLS latency on the original RFC-7748 ladder. Only
-            // repeated use of the same public peer pays for and benefits from
-            // fixed-base precomputation.
-            match shared_secret(&private.0, peer_public) {
-                Ok(shared) => shared,
-                Err(_) => return 0,
-            }
-        } else {
-            if exchange.prepared_peer.get().is_none() {
-                let Ok(prepared) = prepare_peer(peer_public) else {
-                    return 0;
-                };
-                // Concurrent callers may compute the same public table; the
-                // first installed immutable value wins.
-                let _ = exchange.prepared_peer.set(prepared);
-            }
-            let Some(prepared) = exchange.prepared_peer.get() else {
-                return 0;
-            };
-            match shared_secret_prepared(&private.0, prepared) {
-                Ok(shared) => shared,
-                Err(_) => return 0,
-            }
+        let Ok(shared) = shared_secret(&private.0, peer_public) else {
+            return 0;
         };
         // SAFETY: C supplies `output_len` writable bytes.
         i32::from(unsafe { write_exact(output, output_len, shared.as_bytes()) })
@@ -669,15 +622,18 @@ mod tests {
         assert!(!source.0.is_null());
         // SAFETY: All buffers and the module-owned key remain live for each
         // complete call.
-        assert_eq!(unsafe {
-            key_import(
-                source.0,
-                private_a.as_ptr(),
-                private_a.len(),
-                core::ptr::null(),
-                0,
-            )
-        }, 1);
+        assert_eq!(
+            unsafe {
+                key_import(
+                    source.0,
+                    private_a.as_ptr(),
+                    private_a.len(),
+                    core::ptr::null(),
+                    0,
+                )
+            },
+            1
+        );
         // SAFETY: `source` remains live and the returned object is owned by
         // this test.
         let duplicate = OwnedKey(unsafe { key_duplicate(source.0, 1, 0) });
@@ -688,33 +644,33 @@ mod tests {
 
         let mut private_after = [0_u8; SECRET_BYTES];
         // SAFETY: The output is exactly the documented private-key size.
-        assert_eq!(unsafe {
-            key_get_private(
-                duplicate.0,
-                private_after.as_mut_ptr(),
-                private_after.len(),
-            )
-        }, 1);
+        assert_eq!(
+            unsafe {
+                key_get_private(duplicate.0, private_after.as_mut_ptr(), private_after.len())
+            },
+            1
+        );
         assert_eq!(private_after, private_a);
 
         // SAFETY: The public buffers are exact and remain readable.
-        assert_eq!(unsafe {
-            key_set_encoded_public(duplicate.0, public_b.as_ptr(), public_b.len())
-        }, 0);
+        assert_eq!(
+            unsafe { key_set_encoded_public(duplicate.0, public_b.as_ptr(), public_b.len()) },
+            0
+        );
         assert_eq!(unsafe { key_has(duplicate.0, 0, 1) }, 0);
         private_after.fill(0);
-        assert_eq!(unsafe {
-            key_get_private(
-                duplicate.0,
-                private_after.as_mut_ptr(),
-                private_after.len(),
-            )
-        }, 1);
+        assert_eq!(
+            unsafe {
+                key_get_private(duplicate.0, private_after.as_mut_ptr(), private_after.len())
+            },
+            1
+        );
         assert_eq!(private_after, private_a);
 
-        assert_eq!(unsafe {
-            key_set_encoded_public(duplicate.0, public_a.as_ptr(), public_a.len())
-        }, 1);
+        assert_eq!(
+            unsafe { key_set_encoded_public(duplicate.0, public_a.as_ptr(), public_a.len()) },
+            1
+        );
         assert_eq!(unsafe { key_validate(duplicate.0, 1, 1) }, 1);
         private_after.zeroize();
     }

@@ -1,8 +1,8 @@
 #!/usr/bin/python3
-"""Validate X301MLKEM1024 HRR and record-fragmentation traces.
+"""Validate MLKEM1024X301 HRR and record-fragmentation traces.
 
 Sources: RFC 8446 Sections 4.1.3 and 4.2.8, RFC 9846 Section 4.3.8,
-and the fixed 1606-byte X301MLKEM1024 client-share contract.
+and the fixed 1606-byte MLKEM1024X301 client-share contract.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def has_no_x301_share(client_hello: bytes) -> bool:
     try:
         x301_hybrid_keyshare(client_hello)
     except ParseError as error:
-        return str(error) == "found 0 X301MLKEM1024 KeyShare entries"
+        return str(error) == "found 0 MLKEM1024X301 KeyShare entries"
     return False
 
 

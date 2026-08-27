@@ -48,11 +48,7 @@ sh "$ROOT/scripts/check-blind-reference.sh"
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -B \
     "$ROOT/performance/test_summarize.py"
-env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
-    PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -B \
-    "$ROOT/performance/test_summarize_derive_lifecycle.py"
 env PYTHONPYCACHEPREFIX="$WORK/pycache" /usr/bin/python3 -m py_compile \
-    "$ROOT/performance/summarize_derive_lifecycle.py" \
     "$ROOT/performance/summarize_comparative.py"
 /usr/bin/bash -n \
     "$ROOT/scripts/run-x301-benchmark-session.sh" \

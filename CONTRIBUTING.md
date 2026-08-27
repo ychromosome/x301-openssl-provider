@@ -17,7 +17,12 @@ Before proposing a change:
 6. run `sh scripts/check.sh` and, where Valgrind is available,
    `sh scripts/check-secret-taint.sh`.
 
-Changes to X301 or X301MLKEM1024 additionally require the dual-lane provider
+Changes to X301 parsing or arithmetic also run
+`scripts/run-x301-fuzz.sh --runs 40000`. The fast GitHub workflow repeats the
+core and bounded fuzz gates; it does not replace the dual OpenSSL-lane, TLS,
+Valgrind or final-codegen matrices.
+
+Changes to X301 or MLKEM1024X301 additionally require the dual-lane provider
 and TLS entry points in `docs/X301_EXTENDED_ASSURANCE.md`.  Run
 `scripts/check-x301-long.sh` when the ladder, field use, clamping, basepoint or
 frozen long vector changes; it is deliberately excluded from an ordinary

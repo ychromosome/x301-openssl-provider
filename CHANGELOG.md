@@ -2,36 +2,18 @@
 
 ## Unreleased
 
-- Froze the experimental X301/X301MLKEM1024 implementation after independent
-  rereviews and a Standard Codex Security scan with no confirmed product
-  finding. Added a positive deterministic RAND keygen KAT, pre-use artifact
-  seals, authoritative snapshot checks, mangling-neutral codegen matching and
-  unambiguous raw-versus-hybrid artifact names.
-- Closed the X301 rereview findings for selection-dependent key duplication,
-  portable result manifests and benchmark provenance. Added explicit setup,
-  first, second and steady derive measurements. Typed lazy ladder values,
-  projective scaling of the public `A24` constant and the fixed clamped-bit
-  schedule reduce the raw first derive from 75.08 to 58.78 microseconds in a
-  local paired run. Reusing `q*AA` in both doubling outputs removes one small
-  multiplication per doubling. Cold setup plus first derive is about 60.5
-  microseconds; the 1.56x-X25519 target remains open. No new unsafe code or
-  arithmetic backend was added.
-- Added lazy public-peer preparation for repeated X301 derive. A regular
-  signed width-5 comb reuses the existing field backend, scans all 16 table
-  entries in each of 61 rounds, and falls back to the ladder for first-use,
-  twist and exceptional inputs. Sealed dual-lane paired measurements are
-  35.48 and 35.70 microseconds, respectively 1.511x and 1.496x X25519;
-  one-shot latency remains within 1.0% of the prior path. Boundary, 559-case,
-  10,000-case, taint, codegen, duplicate-context and lifecycle gates cover
-  the change.
+- Reopened the X301 candidate after hostile review. Published the complete
+  retained curve-search package, renamed the ML-KEM-first group to
+  `MLKEM1024X301`, made the official runners portable, removed the automatic
+  repeated-peer accelerator, and retained one ladder for every derive.
+- Removed the hard `provider=default` ML-KEM query. Hybrid operations now use
+  the child library context's provider/property policy and fail atomically if
+  no permitted ML-KEM-1024 implementation is available.
+- Added reproducible benchmark provenance and separate setup/first/second/
+  steady measurements. Historical prepared-derive results no longer describe
+  the current implementation.
 - Made Callgrind summary extraction consume its complete stream so strict
   `pipefail` sessions cannot fail with a benign SIGPIPE.
-- Added a pinned, fresh-process ABBA benchmark runner for EVP key generation,
-  prepared derive and KEM operations. It binds every session to source, lane,
-  provider and benchmark hashes, records host/load/affinity provenance, and
-  permits a 3% regression finding only with stable controls and a confirming
-  deterministic instruction count. Review bundles can now carry a separately
-  hashed Git bundle so commit ancestry is independently verifiable.
 - Replaced X301 public-key generation's generic 301-round basepoint ladder
   with the existing constant-time Ed301 fixed-base table and a direct
   one-inversion projective map. Public keys remain byte-identical to the
@@ -41,14 +23,14 @@
   by about 46% and encapsulation by about 30% without changing derive or wire
   bytes.
 - Refocused the repository entry and status documents on X301 and
-  X301MLKEM1024, removing superseded Ed301 development chronology while
-  retaining the normative drafts, implementation registers and evidence.
+  MLKEM1024X301 while retaining the normative drafts, implementation registers
+  and evidence.
 - Added the optional, safe-Rust X301 core by reusing the existing 5x64 field,
   with strict 38-byte u encodings, cofactor-4 clamping, mandatory all-zero
   rejection, an independent Python oracle and RFC-7748-shaped KAT, iteration,
   boundary, small-order and 10,000-case differential tests. Added a distinct
-  OpenSSL KEYMGMT/KEYEXCH and the private-use `X301MLKEM1024` TLS group: ML-KEM-
-  1024 remains entirely OpenSSL-default-provider-owned, values are concatenated
+  OpenSSL KEYMGMT/KEYEXCH and the private-use `MLKEM1024X301` TLS group: ML-KEM-
+  1024 remains entirely OpenSSL-owned, values are concatenated
   ML-KEM first without a project KDF, and no standalone hybrid profile is
   defined. Dual OpenSSL 3.5.7/4.0.1 provider, TLS, lifecycle, failure, taint and
   code-generation gates bind the experimental integration.

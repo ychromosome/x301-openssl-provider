@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""One-shot TLS proxy for deterministic X301MLKEM1024 wire negatives.
+"""One-shot TLS proxy for deterministic MLKEM1024X301 wire negatives.
 
 The proxy mutates exactly one TLS 1.3 KeyShareEntry while preserving every
 unrelated byte.  It covers client ML-KEM/X301 single-bit mutations, server
@@ -132,7 +132,7 @@ def find_client_share(message: bytearray) -> ShareLocation:
     if offset != extensions_end:
         raise MutationError("malformed ClientHello extension boundary")
     if len(matches) != 1:
-        raise MutationError(f"found {len(matches)} X301MLKEM1024 client shares")
+        raise MutationError(f"found {len(matches)} MLKEM1024X301 client shares")
     return matches[0]
 
 
@@ -184,7 +184,7 @@ def find_server_share(message: bytearray) -> ShareLocation:
     if offset != extensions_end:
         raise MutationError("malformed ServerHello extension boundary")
     if len(matches) != 1:
-        raise MutationError(f"found {len(matches)} X301MLKEM1024 server shares")
+        raise MutationError(f"found {len(matches)} MLKEM1024X301 server shares")
     return matches[0]
 
 
@@ -385,7 +385,7 @@ def proxy_once(
     if state.fatal_error is not None:
         raise MutationError(state.fatal_error)
     if not state.mutated:
-        raise MutationError("no X301MLKEM1024 KeyShare was mutated")
+        raise MutationError("no MLKEM1024X301 KeyShare was mutated")
     if (
         mode == "flip"
         and direction == "server"
