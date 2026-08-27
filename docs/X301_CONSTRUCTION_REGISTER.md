@@ -1,12 +1,7 @@
 # X301 construction and simplicity register
 
-Date: 2026-08-25. Sources: RFC 7748, RFC 9846, RFC 9954, RFC 10024,
-FIPS 203 and the OpenSSL 3.5.7/4.0.1 provider contracts named in
-`X301_DRAFT.md`.
-
-This is the mandatory register for every X301/MLKEM1024X301 element that is
-not copied directly from a named standard or contract. An absent row is not
-permission to improvise. The smaller solution wins.
+Date: 2026-08-25. Controlling sources are listed in `X301_DRAFT.md`. Every
+local cryptographic transform MUST have a row here before implementation.
 
 ## Build-versus-buy decisions
 
@@ -18,8 +13,7 @@ permission to improvise. The smaller solution wins.
 | E4 | No new RNG route | OpenSSL provider RAND contract; existing provider keygen contract | Generate private material through provider RAND. Fixed-key derive consumes no RAND. |
 | E5 | TLS group plus required fetchable adapter, no standalone profile | OpenSSL `TLS-GROUP` with `is-kem=1`, provider KEYMGMT/KEM contracts | Expose the EVP-fetchable operations libssl requires. Define no non-TLS KDF, OID, persistence, ciphertext profile or compatibility promise. |
 
-Deviation from E1-E5 is a finding and requires removal, not retrospective
-rationalization.
+E1-E5 are mandatory.
 
 ## Registered project choices
 
@@ -47,20 +41,18 @@ RFC 9846 Section 4.3.8 directly requires locally generated KeyShare values to
 be fresh for every connection. MLKEM1024X301 inherits that rule, including on
 session resumption; this is not a project-specific construction.
 
-## Explicit deletions and non-constructions
+## Forbidden additions
 
-These items MUST be absent from the accepted implementation:
+The implementation MUST NOT add:
 
-| Remove or do not build | Reuse instead | Reason |
-| --- | --- | --- |
-| A second X301 field backend, reducer, limb representation or conditional-swap implementation | Existing Ed301 5x64 limbs, reducer and constant-time selection | E2; bounded private wrapper types are allowed, duplicate arithmetic is not. |
-| Any special rejection of a clamped scalar equal to the twist order or a precomputed `N_t` byte pattern | Exact D3 clamping plus D4 all-zero rejection | No RFC source; it is redundant for contributory failure and creates a local key policy. |
-| Rust/C ML-KEM arithmetic, vendoring, or copied KAT implementation | OpenSSL-selected ML-KEM-1024 via EVP in the child library context | E1/FIPS 203 ownership and application property policy. |
-| Hash, HKDF or label inside the hybrid adapter | Raw `ML-KEM-SS || X301-SS`; TLS 1.3 key schedule | E3/RFC 10024. |
-| Hybrid-specific RNG | Existing provider RAND route and OpenSSL ML-KEM keygen | E4. |
-| Standalone hybrid OID, PKCS#8/SPKI format, application codec or generic protocol | The minimal EVP-fetchable KEM/KEYMGMT surface required by libssl | E5. Technical EVP fetchability is unavoidable but does not create a standalone profile. |
-| Ed301 seed conversion or shared Ed301/X301 key object | Separate provider key types and independently generated secrets | H5. Sharing a curve is not permission to reuse keys. |
-| Copied parsers, error buffers, secret owners or lane scripts | Existing fixed-length/error/zeroization/test infrastructure | Delete-first rule; plumbing must be shared where its contract is identical. |
+- a second X301 field backend, reducer, limb representation, or selector;
+- a twist-order scalar blacklist beyond D3 clamping and D4 all-zero rejection;
+- project-owned ML-KEM arithmetic or KAT logic;
+- a hybrid hash, HKDF, label, RNG, OID, persistent key format, or generic
+  protocol;
+- Ed301/X301 key conversion or shared key objects; or
+- duplicate parsers, secret owners, error plumbing, or lane scripts where the
+  existing contract applies.
 
 ## Review trigger
 

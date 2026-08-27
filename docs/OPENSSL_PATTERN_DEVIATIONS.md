@@ -2,11 +2,8 @@
 
 Date: 2026-08-24; X301 additions: 2026-08-25
 
-This register records which OpenSSL Ed25519/Ed448 test patterns are adopted
-for the optional Ed301 PKI integration and where the draft-00 byte contract
-deliberately differs.  OpenSSL test sources are structural precedents, not
-normative Ed301 encodings.  The Ed301 draft and provider byte/API contracts
-remain authoritative.
+OpenSSL Ed25519/Ed448 tests are structural precedents only. The Ed301 draft
+and provider contracts control expected bytes and API behavior.
 
 Local comparison sources:
 
@@ -30,11 +27,9 @@ Local comparison sources:
 | D6 | **Deliberate deviation:** draft-00 accepts only PKCS#8 `PrivateKeyInfo` version 0. RFC 5958 `OneAsymmetricKey` version 1, with or without embedded public key, is rejected. The seed uniquely derives the public key and KEYMGMT validates that relation, so accepting a second embedded copy adds mismatch policy without a draft requirement. Revisit only if a later Ed301 PKI profile normatively adopts OneAsymmetricKey. | Explicit version-1 and canonical embedded-public-key rejection tests. No mismatch-acceptance path exists. |
 | D7 | The draft fixes the seed at 38 bytes. The nested private-key OCTET STRING accepts neither 37 nor 39 bytes. | Independently constructed, internally consistent DER objects carry actual 37- and 39-byte seeds in `provider_serialization.c`; both reject. |
 
-The ordinary and PKI artifacts deliberately expose no generic private-key
-decoder.  The private-use TLS test artifact exposes only the transactional
-SPKI DER decoder required for wire certificates.  Direct encrypted PKCS#8 is
-not a provider-encoder feature; generic application-side wrapping is outside
-this optional profile.
+The ordinary and PKI artifacts expose no generic private-key decoder. The TLS
+test artifact exposes only its transactional SPKI DER decoder. Encrypted
+PKCS#8 wrapping is application-side.
 
 ## PKI matrix
 
@@ -89,7 +84,5 @@ experimental.
 
 ## Review rule
 
-Every future OpenSSL or Rust toolchain update must preserve the decisions
-above.  A new container form or PKI object class is a profile change, not a
-test-only compatibility tweak, and requires a new dated register entry plus
-positive and negative vectors.
+OpenSSL or Rust updates MUST preserve these decisions. A new container or PKI
+object class requires a dated entry and positive and negative vectors.

@@ -1,13 +1,8 @@
 # X301 and MLKEM1024X301 experimental profile
 
-Status: project draft, 2026-08-25. This document is not an IETF or NIST
-standard and does not assign a public TLS codepoint. The words MUST, MUST NOT,
-SHOULD and MAY describe this experimental ED301 project profile only.
-
-The governing design rule is simplicity: X301 is an RFC-7748-shaped use of
-the already reviewed ED301 field, and MLKEM1024X301 is TLS wiring around X301
-and OpenSSL's ML-KEM-1024. Neither construction creates a second field engine,
-an ML-KEM implementation, a combiner KDF, or a standalone hybrid protocol.
+Status: project draft, 2026-08-25. This is not an IETF or NIST standard and
+does not assign a public TLS codepoint. MUST, MUST NOT, SHOULD, and MAY apply
+only to this project profile.
 
 ## 1. Sources and authority
 
@@ -21,12 +16,8 @@ an ML-KEM implementation, a combiner KDF, or a standalone hybrid protocol.
 | Provider TLS group and KEM surface | OpenSSL `provider-base(7)`, `provider-keymgmt(7)`, `provider-kem(7)`, `EVP_PKEY_encapsulate(3)` and `EVP_PKEY_decapsulate(3)`; exact evidence lanes 3.5.7 and 4.0.1 | The technically EVP-fetchable adapter that libssl requires |
 | ED301 parameters and EdDSA byte contract | `../inputs/round4/ED301-EdDSA-draft.md` and `../inputs/round4/upstream/ed301-v1/ed301-v1.json` | Frozen curve input only; the Ed301-EdDSA contract is unchanged |
 
-RFC 9846 obsoletes RFC 8446 and is the controlling base TLS 1.3 source. Its
-section numbering differs: Supported Groups and Key Share are Sections 4.3.7
-and 4.3.8. RFC 10024 is the published successor used here for the previously
-drafted X25519MLKEM768 pattern. If an implementation comment names an older
-TLS RFC or IETF draft for history, it MUST also name RFC 9846 or RFC 10024,
-respectively, as the controlling published source.
+RFC 9846 Sections 4.3.7 and 4.3.8 control Supported Groups and Key Share.
+RFC 10024 replaces the earlier X25519MLKEM768 draft used as a pattern.
 
 The only project-specific choices are enumerated in
 `X301_CONSTRUCTION_REGISTER.md` and `OPENSSL_PATTERN_DEVIATIONS.md`. An
@@ -53,16 +44,11 @@ Hybrid operations additionally require a permitted `ML-KEM-1024`
 implementation to be available in the child context and fail without partial
 output if it is unavailable. Raw X301 does not have that feature dependency.
 
-OpenSSL requires a `TLS-GROUP` with `is-kem=1` to name provider KEYMGMT and KEM
-operations that libssl fetches through EVP. Consequently, the hybrid adapter
-MUST be technically fetchable through ordinary EVP; hiding it behind a
-TLS-only private entry point would violate the OpenSSL contract. That adapter
-exists solely so libssl can execute the group. It is **not** a promise of a
-standalone hybrid-KEM protocol: this profile defines no non-TLS KDF, OID,
-persistent hybrid-key encoding, generic ciphertext format, application
-workflow, or compatibility commitment outside TLS. A future standalone use
-requires a dated register entry, a documented need and a combiner definition
-following SP 800-56C practice before code is written.
+OpenSSL fetches the KEYMGMT and KEM named by a `TLS-GROUP` with `is-kem=1`.
+The adapter MUST therefore be EVP-fetchable. It defines no non-TLS KDF, OID,
+persistent hybrid-key encoding, generic ciphertext format, or compatibility
+contract. A standalone profile requires a new construction-register entry and
+combiner definition before implementation.
 
 ## 3. ED301 and Montgomery parameters
 
@@ -418,56 +404,14 @@ rejection encodings are 0, 1 and `p-1`.
 The oracle is test-only, variable-time and MUST NOT process production
 secrets.
 
-## 10. Acceptance matrix
+## 10. Verification
 
-The integration is accepted only against the exact source and binary gates
-named below.  Passing them does not change the experimental status or create
-a standards-conformance claim:
-
-| Contract | Required evidence | Retained evidence / required gate |
-| --- | --- | --- |
-| D1 | algebra, exceptional points, 256 deterministic round trips/homomorphisms | PASS in the independent Python oracle |
-| T1 | fixed scalar/u/basepoint KATs and random DH agreement | PASS: four fixed KATs and the T5 DH stream |
-| T2 | frozen results after 1 and 1,000 iterations | PASS byte-for-byte in Python and Rust |
-| T3 | `p-1`, `p`, `p+1`, the 301-bit maximum, all seven high-bit aliases, length 37/39 | PASS in Python, Rust and EVP boundaries |
-| T4 | all main/twist order-1/2/4 x-lines and rejection | PASS: independently derived `u=0,1,p-1`; direct EVP rejects all three in both KAT directions |
-| T5 | at least 10,000 independent differential cases | PASS; canonical digest `257711151f37d9011cbf42123901ae914b77e461db7edb80ee85405e4b97d076` |
-| T6 | KEYEXCH/KEYMGMT EVP matrix in 3.5.7 and 4.0.1 | Historical pre-repair PASS; final read-only archive rerun required |
-| T7 | deterministic derive and poisoned-RAND split | Historical pre-repair PASS; final read-only archive rerun required |
-| T8 | TLS 1.3 handshake, fresh resumption shares and unsupported-peer outcome | Historical pre-repair PASS; final read-only archive rerun required |
-| T9 | ML-KEM mutation, all-zero X301 and boundary mutations | Historical pre-repair PASS; final read-only archive rerun required |
-| T10 | OpenSSL-owned ML-KEM Encaps/Decaps KAT | Historical pre-repair PASS; final read-only archive rerun required |
-| T11 | cover public derivation, signing, X301 key generation and ladder derive, each in defined and tainted mode | Required on the final read-only archive snapshot; its source-manifest digest is recorded with the run |
-| T12 | ladder/cswap/field and fixed-base key-generation disassembly gate | Required on both final provider modules; dynamic taint supplies the complementary secret-address check |
-| T13 | scalar, ladder state and shared-secret zeroization | Required for the named-owner boundary and direct/hybrid EVP lifecycle lanes on both OpenSSL versions |
-
-### 10.1 Extended adversarial assurance
-
-The optional extended lane adapts test *taxonomies* from Wycheproof and
-OpenSSL, never their X25519/X448 expected bytes.  Its expected X301 values
-come only from the independent Python oracle or from the contracts cited in
-each harness.  It adds no production dependency and no `unsafe` block.
-
-| Family | Frozen or executable coverage | Retained evidence / required gate |
-| --- | --- | --- |
-| W1-W6 | 48 semantic cases plus 512 deterministic oracle-generated valid cases; generated JSON and C header reproduce byte-for-byte | Core/oracle gate required; provider results are historical until the final rerun |
-| O1-O2 | OpenSSL `evp_test`-format KAT, pairwise, missing-peer and wrong-peer cases | Final dual-lane rerun required |
-| P1-P4 | 1,000 deterministic commutativity, birational, clamping and canonical-encoding cases | Final core and dual-lane rerun required |
-| M1-M6 | peer replacement, repeat derive, `dupctx`, re-init/key replacement, four-thread sharing and allocation/panic failure injection | Final dual-lane and Valgrind rerun required |
-| R1-R7 | bidirectional cross-lane interop, HRR, fragmentation, fallback, wire mutations, foreign-size rejection and fresh resumption shares | Final dual- and cross-lane rerun required |
-| F1-F4 | persisted coverage-guided Rust and provider/FFI fuzz targets plus the structured boundary sweeps | Required with corpus and exact run metadata; structured grids remain complementary, not a fuzzer substitute |
-| L1 | RFC-7748-shaped one-million iteration target with independently frozen output | PASS: Python oracle and release Rust core agree byte-for-byte on `14ab929a...52b9b00` |
-| L2 | 1,000 complete MLKEM1024X301 handshakes per lane plus six Valgrind reconnects per lane | Historical pre-repair PASS; final long rerun required |
-
-Stable Rust has no supported whole-crate sanitizer switch. The C shim, hybrid
-parser and C harness are instrumented; Rust/FFI memory and secret-flow coverage
-remains the independent Valgrind/T11 lane. The deterministic F sweep is
-complete for its declared grids but does not replace the persisted
-coverage-guided targets.
-
-Exact test counts, toolchains, module hashes and results belong to the sealed
-result bundle for the final source-manifest digest. Pre-repair PASS logs are
-historical evidence only.
+T1-T13 are implemented by the core, provider, TLS, taint, and codegen gates.
+The extended W, O, P, M, R, F, and L families are defined in
+`X301_EXTENDED_ASSURANCE.md`. Expected X301 bytes come from the independent
+Python oracle or a cited contract, never from product output. Exact results,
+toolchains, module hashes, and source identity belong in the sealed result
+bundle, not this specification.
 
 ## 11. Simplicity and implementation limits
 
@@ -497,10 +441,5 @@ The measured production counts are:
 | hybrid-only blocks in `provider_shim.c` | 106 | 104 | |
 | Hybrid total | 807 | 736 | exceeds the 600-line target by 136 source lines |
 
-The repeated-peer accelerator was removed rather than hidden in a separate
-budget; one ladder now serves every derive. The hybrid overrun remains a review
-finding. Its current code gives each validation, allocation and component
-failure a specific provider error while keeping output assignment atomic and
-secret cleanup explicit. No ML-KEM, combiner, KDF, RNG or persistent hybrid
-format was added. Both surfaces MUST be recomputed whenever a counted product
-file changes.
+The hybrid overrun remains an open review finding. Both counts MUST be
+recomputed whenever a counted product file changes.

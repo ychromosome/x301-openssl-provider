@@ -1,10 +1,7 @@
-//! X301 raw Diffie-Hellman primitive over the ED301 field core.
+//! X301 over the ED301 field core.
 //!
-//! The construction follows the Montgomery ladder of RFC 7748 sections 4-6,
-//! translated by the X301 draft decisions D1-D4: the ED301 birational
-//! Montgomery form, RFC-7748-shaped 38-byte input decoding, cofactor-four
-//! scalar clamping, and mandatory all-zero rejection. This module contains no
-//! KDF, RNG, key reuse, peer point validation, or independent field arithmetic.
+//! RFC 7748 sections 4-6 supply the ladder pattern; X301 decisions D1-D4
+//! define its curve, decoding, clamp, and all-zero rejection.
 
 use crypto_bigint::Choice;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -17,32 +14,21 @@ use crate::{
     secret_taint::declassify,
 };
 
-/// Exact byte length of an X301 scalar, public key, and raw shared secret.
-///
-/// Source: RFC 7748 section 5's fixed-width little-endian interface, with the
-/// width translated to the 301-bit ED301 field by X301 decision D2.
+/// X301 scalar, public-key, and raw-secret length.
+/// Source: RFC 7748 section 5 and X301 decision D2.
 pub const X301_BYTES: usize = FIELD_BYTES;
 
-/// Exact byte length of a raw X301 private scalar input.
-///
-/// Source: RFC 7748 section 5's fixed-width scalar interface, translated to
-/// the 301-bit ED301 field by X301 decision D3.
+/// Raw private-scalar length. Source: RFC 7748 section 5 and X301 D3.
 pub const SECRET_BYTES: usize = X301_BYTES;
 
-/// Exact byte length of an X301 public coordinate.
-///
-/// Source: RFC 7748 section 5 and X301 decision D2.
+/// Public-coordinate length. Source: RFC 7748 section 5 and X301 D2.
 pub const PUBLIC_BYTES: usize = X301_BYTES;
 
-/// Exact byte length of a raw X301 shared secret.
-///
-/// Source: RFC 7748 section 6; the result is one fixed-width `u` coordinate.
+/// Raw-secret length. Source: RFC 7748 section 6.
 pub const SHARED_BYTES: usize = X301_BYTES;
 
-/// Canonical little-endian Montgomery `u` coordinate of the ED301 base point.
-///
-/// Source: the D1 birational map from the frozen ED301 base point and the
-/// RFC 7748 section 5 basepoint-multiplication pattern.
+/// Canonical Montgomery `u` of the ED301 base point.
+/// Source: X301 D1 and RFC 7748 section 5.
 pub const BASE_U_BYTES: [u8; X301_BYTES] = [
     0x5b, 0xa6, 0xf0, 0xf4, 0xcc, 0xc6, 0xff, 0x5f, 0x01, 0x8a, 0x24, 0x96, 0xfe, 0x16, 0x5e, 0xb7,
     0xd1, 0x89, 0x39, 0x49, 0xfe, 0x3d, 0x05, 0xf7, 0x9c, 0x12, 0xd2, 0xbd, 0x99, 0x95, 0x2c, 0xd4,
@@ -66,11 +52,7 @@ const A24_MINUS: Fe301 = Fe301::from_canonical_words([
 const A24_DENOMINATOR: u32 = 2_086_388_028;
 const A24_NUMERATOR: u32 = 301;
 
-/// Failure from the X301 byte contract.
-///
-/// Source: RFC 7748 sections 5-6, narrowed by X301 decisions D2 and D4.  The
-/// enum deliberately has no secret-value rejection variant: every 38-byte
-/// scalar is accepted and clamped exactly once under D3.
+/// Failure from RFC 7748 sections 5-6 as narrowed by X301 D2-D4.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum X301Error {
     /// The scalar is not exactly 38 bytes.
@@ -83,11 +65,8 @@ pub enum X301Error {
     AllZeroSharedSecret,
 }
 
-/// Zeroizing owner of one raw X301 shared secret.
-///
-/// Source: RFC 7748 section 6 defines the raw coordinate; the ownership and
-/// no-implicit-KDF boundary follows the OpenSSL provider derive contract. The
-/// value is deliberately neither `Copy` nor `Clone` and is erased on drop.
+/// Non-`Copy`, zeroizing raw secret owner.
+/// Source: RFC 7748 section 6 and the OpenSSL derive contract.
 pub struct SharedSecret(Secret<[u8; SHARED_BYTES]>);
 
 impl Zeroize for SharedSecret {
@@ -99,10 +78,8 @@ impl Zeroize for SharedSecret {
 impl ZeroizeOnDrop for SharedSecret {}
 
 impl SharedSecret {
-    /// Borrow the exact raw bytes for immediate protocol or provider use.
-    ///
-    /// Source: RFC 7748 section 6. The caller must preserve secret ownership
-    /// when copying these bytes and must not treat them as a public artifact.
+    /// Borrow the raw bytes. Copies remain secret-owned.
+    /// Source: RFC 7748 section 6.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8; SHARED_BYTES] {
         &self.0
@@ -111,11 +88,8 @@ impl SharedSecret {
 
 /// Apply the raw X301 function.
 ///
-/// This is the RFC 7748 section 5 ladder with the D1 X301 parameters. `secret`
-/// is clamped according to D3. D2 masks the three unused high bits and reduces
-/// the remaining 301-bit coordinate modulo `p`. Every exact-length input runs
-/// the same 301-bit schedule. D4 then rejects an all-zero result as required
-/// for TLS key exchange by RFC 9846 section 7.4.2.
+/// RFC 7748 section 5 supplies the ladder. D2 canonicalizes `u`, D3 clamps
+/// `secret`, and D4 rejects all zero under RFC 9846 section 7.4.2.
 pub fn x301(secret_bytes: &[u8], u_bytes: &[u8]) -> Result<SharedSecret, X301Error> {
     let secret_bytes: &[u8; X301_BYTES] = secret_bytes
         .try_into()
@@ -126,10 +100,7 @@ pub fn x301(secret_bytes: &[u8], u_bytes: &[u8]) -> Result<SharedSecret, X301Err
     finalize(projective)
 }
 
-/// Derive the canonical X301 public key for one raw 38-byte scalar.
-///
-/// Source: the RFC 7748 section 6 Diffie-Hellman construction, using the D1
-/// X301 base coordinate and D3 scalar clamping.
+/// Derive a canonical public key. Source: RFC 7748 section 6 and X301 D1/D3.
 pub fn public_from_secret(secret: &[u8]) -> Result<[u8; X301_BYTES], X301Error> {
     let secret: &[u8; X301_BYTES] = secret
         .try_into()
@@ -144,19 +115,13 @@ pub fn public_from_secret(secret: &[u8]) -> Result<[u8; X301_BYTES], X301Error> 
         .map_err(|_| X301Error::AllZeroSharedSecret)
 }
 
-/// Derive a raw X301 shared secret from a scalar and peer public key.
-///
-/// Source: RFC 7748 section 6 and RFC 9846 section 7.4.2.  The returned raw
-/// coordinate has no internal KDF; D4 rejects all zero before it is returned.
+/// Derive a raw secret. Source: RFC 7748 section 6 and RFC 9846 section 7.4.2.
 pub fn shared_secret(secret: &[u8], peer_public: &[u8]) -> Result<SharedSecret, X301Error> {
     x301(secret, peer_public)
 }
 
-/// Validate the length of an X301 public coordinate.
-///
-/// D2 accepts every 38-byte input after masking and reduction. Main-curve and
-/// twist coordinates are both accepted here; D4 low-order rejection occurs
-/// only after the complete ladder.
+/// Validate D2 length. Main-curve and twist inputs are accepted; D4 rejection
+/// occurs after the ladder.
 pub fn validate_public_encoding(public: &[u8]) -> Result<(), X301Error> {
     decode_public(public).map(|_| ())
 }

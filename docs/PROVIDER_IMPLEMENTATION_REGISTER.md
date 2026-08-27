@@ -1,8 +1,6 @@
 # Provider implementation register
 
-This register records deliberately local provider infrastructure whose
-rationale can become stale as stable Rust changes. Revisit every entry when
-the canonical Fedora Rust toolchain changes.
+Recheck every row after a stable-Rust or provider-contract change.
 
 | Area | Current implementation | Why it exists | Replacement trigger | Permanent evidence |
 | --- | --- | --- | --- | --- |
@@ -11,10 +9,8 @@ the canonical Fedora Rust toolchain changes.
 
 ## X301 provider additions
 
-Date: 2026-08-25. Sources: OpenSSL 3.5.7 and 4.0.1
-`provider-keymgmt(7)`, `provider-keyexch(7)`, `provider-kem(7)` and
-`provider-base(7)` TLS-GROUP contracts; FIPS 203; RFC 9846; RFC 10024. These
-are implementation constraints, not a completed-lane claim.
+Date: 2026-08-25. Sources: OpenSSL 3.5.7/4.0.1 provider contracts, FIPS 203,
+RFC 9846, and RFC 10024.
 
 | Area | Required implementation | Why it exists | Replacement or deletion trigger | Required permanent evidence |
 | --- | --- | --- | --- | --- |
@@ -27,7 +23,5 @@ are implementation constraints, not a completed-lane claim.
 | Nested EVP use | Use the provider child `OSSL_LIB_CTX` for ML-KEM fetches and inherit its provider/property policy. Capability discovery stays side-effect free; if no permitted ML-KEM implementation exists, hybrid key generation/import fails cleanly. | External providers must not cast the core context; ML-KEM must remain OpenSSL-owned and composable with application policy. | Prefer a smaller standard core upcall if OpenSSL later provides one. Do not add a parallel RNG or auto-load policy. | Selected-provider inspection and isolated ML-KEM-unavailable failure test. |
 | Child-context thread lifecycle | Temporary nested EVP contexts are freed first; `OPENSSL_thread_stop_ex(child)` then releases only the invoking thread's Child-LIBCTX handlers. Refcounted returned `EVP_PKEY` objects remain live. | OpenSSL cannot clear another thread's Child-LIBCTX state at teardown. Omitting the stop can leave another thread's cleanup handler referring to a freed child context; the measured per-operation cost is accepted. | Revisit only if OpenSSL publishes a provider-owned all-thread teardown primitive. | Cross-thread teardown regression first performs OpenSSL's required worker-side stop for the application-owned host context; Valgrind then independently detects any stale provider-child handler. Repeated returned-key use and dual-lane TLS are also required. |
 
-Any replacement must retain fallible allocation, zeroizing destruction of
-rejected secret values, the ordinary/test-artifact separation, and the full
-provider lifecycle contract. It therefore requires both normative OpenSSL
-lanes, the hardening and load/unload matrices, and the secret-taint lane.
+Replacements MUST retain fallible allocation, secret cleanup, ordinary/test
+artifact separation, and both OpenSSL-lane lifecycle and taint gates.

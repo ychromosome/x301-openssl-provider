@@ -1,135 +1,80 @@
 # Zeroization and constant-time boundary
 
-This experimental candidate places the named logical owners of the seed,
-expanded seed bytes, pruned and reduced secret scalar, prefix, deterministic
-nonce, secret response term and response serialization buffer in RAII guards
-from creation. Those guards clear their values on ordinary return, error
-return and panic unwinding. The public crate is safe Rust and has no unsafe
-block.
+## Named secret owners
 
-This is not a guarantee that every physical copy is erased. `Scalar`,
-`FieldElement` and `EdwardsPoint` use by-value arithmetic, and Rust or LLVM may
-create additional stack, register or ABI copies beyond the named owners. The
-candidate therefore makes no forensic stack-remanence or every-copy
-zeroization claim.
+RAII owners clear these Ed301 values on return, error, and panic unwinding:
 
-The optional X301 core follows the same boundary. Its raw scalar, persistent
-Montgomery-ladder state, projective output and returned 38-byte shared secret
-have non-`Copy` RAII owners that clear on normal return, error and unwinding.
-The provider additionally clears its 38-byte raw derive buffer and the complete
-70-byte `ML-KEM-SS || X301-SS` temporary on every exit after creation. Per-round
-`Fe301` products and inversion temporaries remain by-value values covered by
-the every-physical-copy disclaimer above; T13 is therefore a named-owner
-claim, not a forensic stack-erasure claim.
+- seed and expanded seed;
+- pruned and reduced secret scalar;
+- nonce prefix, deterministic nonce, response term, and response buffer.
 
-The provider seed-import boundary constructs the fixed-size seed directly
-inside its non-`Copy`, zeroizing owner. It no longer creates a plain Rust
-array and then copies that array into the owner. The C key-generation buffer
-is cleared on every path after import. This removes the avoidable
-source-level temporary but does not strengthen the physical-copy disclaimer.
+X301 owners clear the raw scalar, ladder state, projective output, and returned
+38-byte shared secret. The provider clears its raw derive buffer, key-generation
+seed buffer, and the temporary 70-byte `ML-KEM-SS || X301-SS` value on every
+exit after creation.
 
-Provider keys and signature contexts share immutable expanded-signing and
-prepared-verification objects through a narrow atomic reference-counted owner.
-The owner is fallibly allocated, exposes no mutation, and destroys its value
-after the last reference. The expanded signing object remains separate from
-the public verification table: a public-only key or context therefore cannot
-keep a private scalar or nonce prefix alive. Last-owner destruction runs the
-existing zeroizing secret destructors; it does not strengthen the physical-copy
-disclaimer above.
+These guarantees cover named source-level owners only. Rust and LLVM may copy
+field, scalar, point, stack, register, spill, or ABI values. The project makes
+no every-copy or forensic stack-remanence claim.
 
-The owner necessarily uses raw-pointer operations and explicit `Send`/`Sync`
-implementations inside the provider's pre-existing native FFI unsafe boundary.
-Its ordering follows the standard immutable reference-count pattern: relaxed
-increments, release decrements, an acquire fence before last-owner destruction,
-and abort on reference-count overflow. It adds no unsafe code to the public
-cryptographic core or its arithmetic, but it is still part of the provider FFI
-surface that requires independent review and lifecycle stress testing.
+Destructors do not run with `panic=abort`. The core and provider reject that
+panic strategy. Release gates record `panic=unwind` on the actual compiler
+invocations and exercise unwinding through secret owners. They do not inspect
+freed stack memory.
 
-Destructors do not run under `panic=abort`. The core crate and OpenSSL provider
-therefore reject every non-unwinding panic strategy at compile time. The
-checked release gates additionally append `panic=unwind` to the actual `rustc`
-invocation for each security-relevant crate and record the complete invocation
-and toolchain identity. Controlled tests exercise both the central zeroizing
-guard and the actual expansion/signing scopes under `catch_unwind`. These
-tests do not inspect freed stack memory and do not strengthen the every-copy
-disclaimer.
+## Constant-time boundary
 
-The separate Valgrind harness marks the seed undefined and exercises public
-key derivation and signing through explicit public-output boundaries. It is a
-preliminary control-flow and memory check for one local build, not a proof of
-constant-time execution, complete zeroization or fault resistance.
+The public Rust core forbids unsafe code. Secret fixed-base multiplication
+uses fixed radix-16 digits and scans all eight table entries. X301 uses a fixed
+301-doubling schedule. Runtime field correction crosses the reviewed
+`CtAssign`/`cmov` boundary. Wide reduction and scalar reduction use fixed loop
+counts.
 
-With the `x301` feature, the same harness also marks the X301 private scalar
-undefined and exercises the complete 301-bit ladder schedule. The final-module
-gate inspects the ladder and shared 5x64 field symbols. These observations are
-compiler- and binary-specific and do not strengthen the general limitation
-above.
+Public Ed301 verification uses variable-time wNAF/Straus recoding and public
+table indices. Point decoding uses a fixed public exponent and verifies its
+candidate. The independent Python oracle is variable-time and MUST NOT process
+production secrets.
 
-Secret fixed-base multiplication uses signed radix 16 with a fixed number of
-digits. Every digit scans all eight entries in its table and selects with
-constant-time masks. The specialized five-limb field backend uses fixed-size
-loops, and each runtime conditional correction crosses the `CtAssign`/`cmov`
-barrier. Separate `const` helpers exist only to construct immutable public
-tables during compilation; runtime secret arithmetic cannot call them. Public
-verification uses explicitly named variable-time wNAF/Straus recoding and
-table indexing; its response, challenge, commitment and verification key are
-public. Point decoding uses a public fixed-exponent square-root-ratio
-calculation and always verifies the candidate before accepting it. These
-source properties still require the fresh final-code disassembly, taint and
-timing gates listed below.
+Source structure is not a constant-time proof. Secret-taint and disassembly
+gates bind one compiler, architecture, profile, and final binary. A compiler,
+target, profile, inlining, or arithmetic change MUST rerun those gates.
 
-The runtime wide-field reducer folds with the positive two-limb constant
-`2^99 - 947`. Its multiply-accumulate and carry loops have compile-time-fixed
-trip counts and end in the existing conditional-subtraction barrier. This
-removes the former source-level borrow chains without introducing a new
-unsafe block or architecture intrinsic. The source argument remains subject
-to exact-build disassembly, taint and timing checks; Safe Rust alone is not a
-constant-time proof.
+The current final-binary policy is defined for x86-64. AArch64 disassembly,
+timing, and cache evidence remains open.
 
-The subgroup test for an externally supplied public key now reuses that public
-point's odd-multiples verification table with a fixed width-8 wNAF encoding of
-the public order `L`. Its 299 doublings, 17 signed mixed additions and table
-indices depend only on the hardcoded public schedule, not on point data. The
-identity is rejected before table construction and no `VerifyingKey` is
-constructed before `[L]P = O`; decodable non-subgroup inputs nevertheless pay
-one bounded public table construction before rejection. The former sparse,
-input-independent 299-doubling/63-addition schedule remains the differential
-reference. Internally derived public keys do not repeat either hostile-input
-subgroup operation: `[s]B` is in the exact-order base-point subgroup by
-construction, and pruning makes an identity scalar impossible in the selected
-range. The ordinary build retains a cheap declassified identity fault check
-and validates the resulting curve encoding; `sign-self-verify` also retains
-the explicit subgroup and signature-equation fault checks. Canonical public
-bytes and their unique affine point cross the public-output declassification
-boundary, while the secret-correlated projective coordinate is discarded.
+## Provider FFI and shared state
 
-The ordinary provider follows the standard EdDSA signing path and does not
-perform a second complete verification of each signature. The optional
-`sign-self-verify` feature retains that extra fault-detection check for a
-separately selected build. This choice does not alter secret arithmetic,
-transcript bytes or the verification language; it does change the additional
-fault-detection boundary and must remain explicit in downstream build records.
+Provider keys and contexts share immutable expanded-signing and
+prepared-verification objects through a fallibly allocated atomic owner.
+Public-only objects cannot retain the signing scalar or nonce prefix. The last
+reference runs the existing secret destructors.
 
-Provider key generation requests 149 bits from the application-linked private
-RAND path in a child `OSSL_LIB_CTX`. A thread that uses that RAND path calls
-`OPENSSL_thread_stop_ex()` for the child context before provider teardown;
-the cross-thread unload regression keeps the worker alive while the final
-provider reference is released.
+Raw pointers, allocation, and explicit `Send`/`Sync` implementations remain
+inside the provider FFI boundary. Reference increments are relaxed; decrements
+are release operations followed by an acquire fence before final destruction.
+Reference-count overflow aborts. This boundary requires allocation-failure,
+duplicate/free, concurrency, load/unload, and Valgrind tests.
 
-The deferred assurance work includes a fresh exact-revision full-scope source
-security scan, disassembly and secret-dependent branch/address review,
-multi-architecture timing and cache tests, fault injection, and a decision on
-a stricter non-`Copy` secret-arithmetic ownership model. Until those gates are
-complete, this candidate must not process production keys.
+The ordinary signing provider follows the EdDSA signing path without a second
+verification. Feature `sign-self-verify` adds that fault check. The selected
+build MUST be recorded because the feature changes fault detection, not wire
+bytes.
 
-The release override for `crypto-bigint 0.7.5` is a top-level integration
-requirement, because Cargo profiles are not transitive. The repository's
-shared compiler wrapper enforces `crypto-bigint` overflow checks off, ED301
-overflow checks on, `panic=unwind`, optimization level 3, one codegen unit and
-disabled debug assertions on the actual compiler calls used by the root,
-downstream, secret-taint and provider release gates. Inherited Rust/Cargo
-compiler and release-profile overrides are rejected before Cargo runs. Each
-external consuming product must still repeat the override for its real
-production profile and revalidate its final machine code. The bundled
-downstream workspace is an executable integration fixture, not a substitute
-for that production-specific review.
+## RAND and child contexts
+
+Provider key generation requests private RAND bytes through the child
+`OSSL_LIB_CTX`. A thread using that child RAND path calls
+`OPENSSL_thread_stop_ex()` before provider teardown. Cross-thread teardown
+tests keep workers alive while provider references are released.
+
+## Build boundary
+
+The top-level release profile MUST keep Ed301 overflow checks enabled,
+`crypto-bigint` overflow checks disabled, `panic=unwind`, optimization level
+3, one codegen unit, and debug assertions disabled. Cargo profiles are not
+transitive. Every consuming product MUST repeat the override and inspect its
+own final binary.
+
+Open work: exact-revision full-source security review, multi-architecture
+timing and cache tests, fault injection, and a decision on stricter non-`Copy`
+secret arithmetic. Production keys MUST NOT be used before those gates close.

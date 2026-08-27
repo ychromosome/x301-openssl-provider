@@ -1,8 +1,6 @@
 # Arithmetic implementation register
 
-This register records deliberately local arithmetic code whose rationale can
-become stale as compilers and libraries change. Revisit every entry whenever
-the canonical Fedora Rust toolchain changes.
+Recheck every row after a compiler, target, profile, or arithmetic change.
 
 | Area | Current implementation | Why it exists | Permanent evidence |
 | --- | --- | --- | --- |
@@ -14,10 +12,8 @@ the canonical Fedora Rust toolchain changes.
 
 ## X301 arithmetic constraint
 
-Date: 2026-08-25. Source: RFC 7748 Sections 4-6 and the frozen ED301 field
-contract. This section records required reuse and the evidence expected from
-each implementation; it does not turn passing local tests into a production
-claim.
+Date: 2026-08-25. Sources: RFC 7748 Sections 4-6 and the frozen ED301 field
+contract.
 
 | Area | Required implementation | Why no separate implementation is permitted | Required permanent evidence |
 | --- | --- | --- | --- |
@@ -27,9 +23,5 @@ claim.
 | BMI2/ADX candidate | Not part of the portable provider. The measured compiler probe reduces instructions, but a runtime `target_feature` call requires a new unsafe/dispatch boundary and a second arithmetic implementation. | The project forbids new unsafe in the core and requires one portable field backend. A whole-DSO native build would also risk `SIGILL`. | Reconsider only as a separate architecture project with forced portable/accelerated differential, negative-CPU, final-binary CT and x86-64/AArch64 fallback gates. |
 | Twist-scalar edge | Do not add a special raw-key or `4*q_twist` rejection. Use exact clamping and mandatory all-zero output rejection. | No RFC source exists for an additional scalar blacklist; D4 already supplies contributory failure. | D3 clamping KATs and complete T4 corpus. |
 
-The independent Python reference is deliberately variable-time test code and
-is not an alternate production arithmetic path.
-
-The final codegen gate is intentionally compiler-specific. Passing it under one
-compiler is not a promise about another compiler, architecture, build profile,
-or future inlining decision.
+The Python reference is variable-time test code. Codegen results apply only to
+the recorded compiler, target, profile, and final binary.
