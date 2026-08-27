@@ -18,11 +18,12 @@ jobs:
           components: clippy,rustfmt
       - name: Expose resolved Rust binaries to hermetic gates
         run: |
-          for tool in cargo rustc rustfmt cargo-clippy rustdoc; do
+          for tool in cargo rustc rustfmt cargo-fmt cargo-clippy rustdoc; do
             sudo ln -sf "$(rustup which "$tool")" "/usr/bin/$tool"
           done
       - name: Verified core, differential and fuzz gates
         run: |
+          unset CARGO_HOME CARGO_INCREMENTAL CARGO_TERM_COLOR
           snapshot=$(mktemp -d)
           trap 'chmod -R u+w "$snapshot"; rm -rf "$snapshot"' EXIT
           {

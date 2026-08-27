@@ -19,8 +19,8 @@ if env -0 | grep -zEq "$FORBIDDEN"; then
 fi
 
 for tool in /usr/bin/cargo /usr/bin/rustc /usr/bin/rustfmt \
-        /usr/bin/cargo-clippy /usr/bin/rustdoc /usr/bin/gcc /usr/bin/ar \
-        /usr/bin/python3; do
+        /usr/bin/cargo-fmt /usr/bin/cargo-clippy /usr/bin/rustdoc \
+        /usr/bin/gcc /usr/bin/ar /usr/bin/python3; do
     test -x "$tool" || {
         echo "missing canonical build tool: $tool" >&2
         exit 127
