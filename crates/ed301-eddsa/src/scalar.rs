@@ -103,16 +103,6 @@ impl Scalar {
         }
     }
 
-    /// Return whether this canonical scalar is zero.
-    ///
-    /// This predicate is constant-time. It is currently used only by the
-    /// debug assertion which binds X301 fixed-base key generation to the
-    /// clamped-scalar identity-unreachability proof.
-    #[cfg(all(debug_assertions, feature = "x301"))]
-    pub(crate) fn is_zero(&self) -> Choice {
-        self.0.is_zero()
-    }
-
     /// Add modulo `L`.
     pub(crate) fn add(&self, rhs: &Self) -> Secret<Self> {
         secret(Self(self.0.add_mod(&rhs.0, &NONZERO_MODULUS)))

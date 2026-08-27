@@ -6,6 +6,10 @@
   retained curve-search package, renamed the ML-KEM-first group to
   `MLKEM1024X301`, made the official runners portable, removed the automatic
   repeated-peer accelerator, and retained one ladder for every derive.
+- Removed the redundant reduction of a clamped X301 key-generation scalar
+  before fixed-base multiplication. The base point's order makes the direct
+  and reduced products identical; boundary, differential, taint and codegen
+  gates cover the simpler path.
 - Removed the hard `provider=default` ML-KEM query. Hybrid operations now use
   the child library context's provider/property policy and fail atomically if
   no permitted ML-KEM-1024 implementation is available.

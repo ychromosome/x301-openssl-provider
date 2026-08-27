@@ -111,11 +111,15 @@ fn k1_clamped_scalar_reduction_matches_the_independent_boundary_vectors() {
         assert_eq!(clamped[0] & 3, 0, "{label}");
         assert_eq!(clamped[FIELD_BYTES - 1] & 0xe0, 0, "{label}");
         assert_ne!(clamped[FIELD_BYTES - 1] & 0x10, 0, "{label}");
-        assert_eq!(
-            Scalar::reduce_pruned_le(&clamped).canonical_bytes(),
-            expected,
-            "{label}"
-        );
+        let reduced = Scalar::reduce_pruned_le(&clamped);
+        assert_eq!(reduced.canonical_bytes(), expected, "{label}");
+        let direct = EdwardsPoint::scalar_mul_base_pruned(&clamped)
+            .montgomery_u_public_artifact()
+            .expect("direct pruned fixed-base result");
+        let reduced_result = EdwardsPoint::scalar_mul_base(&reduced)
+            .montgomery_u_public_artifact()
+            .expect("reduced fixed-base result");
+        assert_eq!(direct, reduced_result, "{label}");
     }
     assert!(interval_counts[1] > 0);
     assert!(interval_counts[2] > 0);

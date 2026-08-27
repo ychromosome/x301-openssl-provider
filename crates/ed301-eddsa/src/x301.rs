@@ -13,7 +13,6 @@ use crate::{
     edwards::EdwardsPoint,
     field_5x64::{Fe301, Fe301Lazy},
     parameters::{FIELD_BITS, FIELD_BYTES},
-    scalar::Scalar,
     secret::{Secret, secret},
     secret_taint::declassify,
 };
@@ -138,16 +137,11 @@ pub fn public_from_secret(secret: &[u8]) -> Result<[u8; X301_BYTES], X301Error> 
         .try_into()
         .map_err(|_| X301Error::InvalidSecretLength)?;
     let clamped = clamp_scalar(secret);
-    let reduced = Scalar::reduce_pruned_le(&clamped);
 
-    // Let L be the odd prime subgroup order. A clamped k is in
-    // [2^300, 2^301) and k = 0 (mod 4). The only multiples of L in this
-    // interval are 2L and 3L; because L = 3 (mod 4), their residues are 2
-    // and 1. Also 4L >= 2^301. Hence no clamped k is 0 modulo L.
-    #[cfg(debug_assertions)]
-    debug_assert!(!reduced.is_zero().to_bool());
-
-    EdwardsPoint::scalar_mul_base(&reduced)
+    // The base point has order L, so [k]B = [k mod L]B. The fixed-base
+    // routine accepts the exact pruned encoding and already scans its table
+    // in constant time; reducing k first only repeats secret arithmetic.
+    EdwardsPoint::scalar_mul_base_pruned(&clamped)
         .montgomery_u_public_artifact()
         .map_err(|_| X301Error::AllZeroSharedSecret)
 }
