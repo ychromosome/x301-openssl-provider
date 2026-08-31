@@ -16,35 +16,34 @@ LANE_ROOT_ARG=$1
 LANE=$2
 LANE_EVIDENCE=$3
 
-sh "$ROOT/scripts/require-verified-snapshot.sh"
 sh "$ROOT/scripts/check-rust-build-environment.sh"
-case "$ROOT" in
-    *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
-esac
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 verify_lane() {
     sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
         "$LANE_ROOT_ARG" "$LANE" "$LANE_EVIDENCE"
 }
+BUILD=$(mktemp -d "/tmp/ed301-provider-${LANE}.XXXXXX")
+if ! sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
+        "$LANE_ROOT_ARG" "$LANE" "$LANE_EVIDENCE" \
+        "$BUILD/openssl-lane"; then
+    chmod -R u+w "$BUILD" 2>/dev/null || true
+    rm -rf -- "$BUILD"
+    exit 1
+fi
+LANE_ROOT_ARG=$BUILD/openssl-lane
 verify_lane
 
 LANE_ROOT=$(readlink -f -- "$LANE_ROOT_ARG")
 OPENSSL_PREFIX=$LANE_ROOT/inst/$LANE
 OPENSSL_LIB=$OPENSSL_PREFIX/lib
 OPENSSL_BIN=$OPENSSL_PREFIX/bin/openssl
-BUILD=$(mktemp -d "/tmp/ed301-provider-${LANE}.XXXXXX")
 HOME_DIR=$BUILD/home
 CARGO_HOME_DIR=$BUILD/cargo-home
 mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$BUILD/bin" \
     "$BUILD/modules" "$BUILD/fresh-modules" "$BUILD/evidence" \
     "$BUILD/generated" "$BUILD/targets" "$BUILD/profile-markers"
-{
-    printf '%s\n' '[build]' 'rustflags = ["-Cpanic=unwind"]' '' \
-        '[source.crates-io]' 'replace-with = "vendored-sources"' '' \
-        '[source.vendored-sources]'
-    printf "directory = '%s'\n" "$ROOT/vendor"
-    printf '%s\n' '' '[net]' 'offline = true'
-} >"$CARGO_HOME_DIR/config.toml"
-chmod 600 "$CARGO_HOME_DIR/config.toml"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor" panic-unwind
 
 LOG=$BUILD/evidence/run.log
 STATUS=$BUILD/evidence/status.txt
@@ -96,7 +95,9 @@ provider_env "$BUILD/targets/identity" /usr/bin/rustc --version --verbose
 provider_env "$BUILD/targets/identity" /usr/bin/cargo --version --verbose
 provider_env "$BUILD/targets/identity" /usr/bin/rustfmt --version
 provider_env "$BUILD/targets/identity" /usr/bin/cargo-clippy --version
-"$OPENSSL_BIN" version -a
+env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
+    OPENSSL_CONF=/dev/null LD_LIBRARY_PATH="$OPENSSL_LIB" \
+    "$OPENSSL_BIN" version -a
 (cd "$ROOT/inputs/round4" && sha256sum --strict --quiet -c SHA256SUMS)
 
 # Isolated Python cannot import user startup state.  It writes only to the
@@ -343,6 +344,9 @@ sha256sum --strict --quiet -c \
     "$BUILD/evidence/pre-execution-artifacts.seal"
 (cd "$BUILD" && sha256sum --strict --quiet -c \
     evidence/pre-execution-artifacts.sha256)
+(cd "$LANE_ROOT" && \
+    sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS.seal && \
+    sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS)
 verify_lane
 
 run_harness() {

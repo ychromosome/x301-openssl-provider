@@ -51,6 +51,14 @@ remains explicit.
 The Git blob identifiers and SHA-256 values above preserve the exact origin
 mapping without making the historical repository part of this source tree.
 
+## Vendored AArch64 detector patch
+
+`cpufeatures 0.3.0` used an any-bit test for composite Linux/Android HWCAP
+masks. The local patch requires every bit implied by Rust's `aes`, `sha2`,
+`sha3`, and `sm4` target features. The upstream checksum-map SHA-256 and exact
+change are recorded in `vendor/cpufeatures/ED301_PATCHES.md`; the crate version,
+license, and registry package checksum are unchanged.
+
 ## X301 and hybrid sources
 
 X301 was implemented additively from the frozen ED301 parameters, the RFC

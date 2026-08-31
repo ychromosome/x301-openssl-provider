@@ -49,20 +49,23 @@ reference lanes are 3.5.7 and 4.0.1.
 Authoritative gates require a caller-authenticated, read-only snapshot:
 
 ```sh
-ED301_SOURCE_MODE=archive \
-ED301_VERIFIED_SNAPSHOT=1 \
-ED301_EXPECTED_SOURCE_MANIFEST_SHA256=<trusted-sha256> \
-    sh scripts/check.sh
+scripts/run-authoritative-gate.sh archive <trusted-sha256> check
 ```
+
+The launcher removes inherited startup and tool-control variables before the
+gate shell starts. Calling an underlying gate script directly does not produce
+authoritative evidence. The host kernel, dynamic loader, and outer process
+starter remain trusted.
 
 Provider and TLS matrices:
 
 ```sh
-scripts/test-x301-provider-contracts.sh \
+scripts/run-authoritative-gate.sh archive <trusted-sha256> \
+  test-x301-provider-contracts \
     /trusted/openssl-3.5.7-lane <3.5.7-evidence-sha256> \
     /trusted/openssl-4.0.1-lane <4.0.1-evidence-sha256>
 
-scripts/test-x301-tls.sh \
+scripts/run-authoritative-gate.sh archive <trusted-sha256> test-x301-tls \
     /trusted/openssl-3.5.7-lane <3.5.7-evidence-sha256> \
     /trusted/openssl-4.0.1-lane <4.0.1-evidence-sha256>
 ```

@@ -11,6 +11,10 @@ set -eu
 PATH=/usr/bin:/bin
 export PATH LC_ALL=C
 
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+sh "$ROOT/scripts/require-verified-snapshot.sh"
+
 if [ "$#" -ne 2 ]; then
     printf 'usage: %s <x301-provider.so> <new-evidence-directory>\n' "$0" >&2
     exit 2

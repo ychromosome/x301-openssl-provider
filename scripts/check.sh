@@ -5,11 +5,8 @@ PATH=/usr/bin:/bin
 export PATH LC_ALL=C
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-sh "$ROOT/scripts/require-verified-snapshot.sh"
 sh "$ROOT/scripts/check-rust-build-environment.sh"
-case "$ROOT" in
-    *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
-esac
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 
 WORK=$(mktemp -d /tmp/ed301-core-gate.XXXXXX)
 HOME_DIR=$WORK/home
@@ -17,13 +14,8 @@ CARGO_HOME_DIR=$WORK/cargo-home
 TARGET_DIR=$WORK/target
 MARKERS=$WORK/profile-markers
 mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$TARGET_DIR" "$MARKERS"
-{
-    printf '%s\n' '[source.crates-io]' 'replace-with = "vendored-sources"' \
-        '' '[source.vendored-sources]'
-    printf "directory = '%s'\n" "$ROOT/vendor"
-    printf '%s\n' '' '[net]' 'offline = true'
-} >"$CARGO_HOME_DIR/config.toml"
-chmod 600 "$CARGO_HOME_DIR/config.toml"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor"
 printf 'cargo_config_sha256=%s\n' \
     "$(sha256sum "$CARGO_HOME_DIR/config.toml" | awk '{print $1}')"
 cleanup() {
@@ -43,6 +35,7 @@ cargo_clean() {
 
 (cd "$ROOT/inputs/round4" && sha256sum --strict --quiet -c SHA256SUMS)
 sh "$ROOT/scripts/test-source-tree-gate.sh"
+sh "$ROOT/scripts/test-build-input-hardening.sh"
 sh "$ROOT/scripts/test-rustc-profile-guard.sh"
 sh "$ROOT/scripts/check-blind-reference.sh"
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
@@ -84,6 +77,14 @@ cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
 cargo_clean test --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets \
     --features x301,sign-self-verify
+
+case "$(/usr/bin/uname -m)" in
+    aarch64|arm64)
+        cargo_clean test \
+            --manifest-path "$ROOT/vendor/cpufeatures/Cargo.toml" \
+            --locked --offline
+        ;;
+esac
 
 clean_env /usr/bin/rustc --version --verbose >"$MARKERS/toolchain.txt"
 (cd / && env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \

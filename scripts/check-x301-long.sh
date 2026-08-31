@@ -7,24 +7,16 @@ PATH=/usr/bin:/bin
 export PATH LC_ALL=C
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-sh "$ROOT/scripts/require-verified-snapshot.sh"
 sh "$ROOT/scripts/check-rust-build-environment.sh"
-case "$ROOT" in
-    *"'"*) echo "source snapshot path may not contain an apostrophe" >&2; exit 2 ;;
-esac
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 
 WORK=$(mktemp -d /tmp/ed301-x301-long.XXXXXX)
 HOME_DIR=$WORK/home
 CARGO_HOME_DIR=$WORK/cargo-home
 TARGET_DIR=$WORK/target
 mkdir -m 700 "$HOME_DIR" "$CARGO_HOME_DIR" "$TARGET_DIR"
-{
-    printf '%s\n' '[source.crates-io]' 'replace-with = "vendored-sources"' \
-        '' '[source.vendored-sources]'
-    printf "directory = '%s'\n" "$ROOT/vendor"
-    printf '%s\n' '' '[net]' 'offline = true'
-} >"$CARGO_HOME_DIR/config.toml"
-chmod 600 "$CARGO_HOME_DIR/config.toml"
+/usr/bin/python3 -I -B "$ROOT/scripts/write-cargo-config.py" \
+    "$CARGO_HOME_DIR/config.toml" "$ROOT/vendor"
 cleanup() {
     rm -rf -- "$WORK"
 }

@@ -9,15 +9,17 @@ categories, not X25519/X448 expected bytes.
 python3 -I -B -O reference/x301/generate_adversarial_corpus.py --check
 python3 -I -B -O reference/x301/test_x301_reference.py
 
-scripts/test-x301-provider-contracts.sh \
+scripts/run-authoritative-gate.sh archive SOURCE_MANIFEST_SHA256 \
+  test-x301-provider-contracts \
   OPENSSL_3_5_7_ROOT OPENSSL_3_5_7_EVIDENCE_SHA256 \
   OPENSSL_4_0_1_ROOT OPENSSL_4_0_1_EVIDENCE_SHA256
 
-scripts/test-x301-tls.sh \
+scripts/run-authoritative-gate.sh archive SOURCE_MANIFEST_SHA256 test-x301-tls \
   OPENSSL_3_5_7_ROOT OPENSSL_3_5_7_EVIDENCE_SHA256 \
   OPENSSL_4_0_1_ROOT OPENSSL_4_0_1_EVIDENCE_SHA256
 
-X301_TLS_LONG_HANDSHAKES=1000 scripts/test-x301-tls.sh \
+scripts/run-authoritative-gate.sh archive SOURCE_MANIFEST_SHA256 \
+  test-x301-tls --long-handshakes 1000 \
   OPENSSL_3_5_7_ROOT OPENSSL_3_5_7_EVIDENCE_SHA256 \
   OPENSSL_4_0_1_ROOT OPENSSL_4_0_1_EVIDENCE_SHA256
 ```

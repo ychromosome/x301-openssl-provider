@@ -4,11 +4,13 @@
 set -Eeuo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+PATH=/usr/bin:/bin
+export PATH LC_ALL=C
+sh "$ROOT/scripts/check-rust-build-environment.sh"
+sh "$ROOT/scripts/require-verified-snapshot.sh"
 CARGO=$($ROOT/scripts/resolve-rust-tool.sh cargo)
 RUSTC=$($ROOT/scripts/resolve-rust-tool.sh rustc)
 RUST_BIN=$(dirname -- "$CARGO")
-PATH=/usr/bin:/bin
-export PATH LC_ALL=C
 umask 077
 
 if test "$#" -ne 4; then
@@ -22,8 +24,6 @@ LANE_357_EVIDENCE=$2
 LANE_401_ROOT=$3
 LANE_401_EVIDENCE=$4
 
-sh "$ROOT/scripts/require-verified-snapshot.sh"
-
 if test -n "${X301_CONTRACT_RESULT_ROOT:-}"; then
     RESULT_ROOT=$X301_CONTRACT_RESULT_ROOT
     test ! -e "$RESULT_ROOT" && test ! -L "$RESULT_ROOT" || {
@@ -35,6 +35,15 @@ else
     RESULT_ROOT=$(mktemp -d /tmp/x301-contracts.XXXXXX)
 fi
 RESULT_ROOT=$(readlink -f -- "$RESULT_ROOT")
+mkdir -m 700 -- "$RESULT_ROOT/openssl-lanes"
+sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
+    "$LANE_357_ROOT" 3.5.7 "$LANE_357_EVIDENCE" \
+    "$RESULT_ROOT/openssl-lanes/3.5.7"
+sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
+    "$LANE_401_ROOT" 4.0.1 "$LANE_401_EVIDENCE" \
+    "$RESULT_ROOT/openssl-lanes/4.0.1"
+LANE_357_ROOT=$RESULT_ROOT/openssl-lanes/3.5.7
+LANE_401_ROOT=$RESULT_ROOT/openssl-lanes/4.0.1
 
 record_run_identity() {
     mkdir -m 700 -- "$RESULT_ROOT/inputs"
@@ -42,6 +51,10 @@ record_run_identity() {
         "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256"
     cp -- "$LANE_401_ROOT/logs/4.0.1/evidence_manifest.sha256" \
         "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256"
+    cp -- "$LANE_357_ROOT/PRIVATE_LANE_SHA256SUMS" \
+        "$RESULT_ROOT/inputs/openssl-3.5.7-private-lane.sha256"
+    cp -- "$LANE_401_ROOT/PRIVATE_LANE_SHA256SUMS" \
+        "$RESULT_ROOT/inputs/openssl-4.0.1-private-lane.sha256"
     test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256" | awk '{print $1}')" \
         = "$LANE_357_EVIDENCE"
     test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256" | awk '{print $1}')" \
@@ -59,10 +72,13 @@ record_run_identity() {
             secret-taint/Cargo.toml secret-taint/src \
             scripts/check.sh scripts/check-secret-taint.sh \
             scripts/check-x301-final-codegen.sh scripts/check-x301-long.sh \
+            scripts/materialize-openssl-provider-lane.sh \
             scripts/resolve-rust-tool.sh \
+            scripts/run-authoritative-gate.sh \
             scripts/run-x301-fuzz.sh \
             scripts/test-x301-provider-contracts.sh scripts/test-x301-tls.sh \
             scripts/verify-openssl-provider-lane.sh \
+            scripts/write-cargo-config.py \
             -type f -exec sha256sum {} + | sort -k2
     ) >"$RESULT_ROOT/X301_SOURCE_SHA256SUMS"
     {
@@ -449,6 +465,15 @@ run_lane() {
 record_run_identity
 run_lane 3.5.7 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
 run_lane 4.0.1 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
+sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
+    "$LANE_357_ROOT" 3.5.7 "$LANE_357_EVIDENCE"
+sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
+    "$LANE_401_ROOT" 4.0.1 "$LANE_401_EVIDENCE"
+for lane_root in "$LANE_357_ROOT" "$LANE_401_ROOT"; do
+    (cd "$lane_root" && \
+        sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS.seal && \
+        sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS)
+done
 (cd "$RESULT_ROOT" && sha256sum \
     X301_SOURCE_SHA256SUMS TOOLCHAIN.txt RUN_INPUTS.tsv \
     FUZZING_STRATEGY.txt inputs/*.sha256 >RUN_IDENTITY_SHA256SUMS

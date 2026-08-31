@@ -10,19 +10,20 @@ Before submitting a change:
    applicable draft, and `inputs/round4/`.
 2. Add independent expected values for behavioral changes.
 3. Regenerate `SOURCE_MANIFEST.sha256`.
-4. Run `scripts/check.sh` and the affected provider, TLS, fuzz, taint, and
-   final-codegen gates.
+4. Run `scripts/run-authoritative-gate.sh` from the verified archive snapshot
+   for `check` and every affected provider, TLS, fuzz, taint, or long gate.
 
 X301 parsing or arithmetic changes require:
 
 ```sh
-scripts/run-x301-fuzz.sh --runs 40000
+scripts/run-authoritative-gate.sh archive <trusted-sha256> \
+  run-x301-fuzz --runs 40000
 ```
 
 Ladder, field, clamp, basepoint, or long-vector changes also require:
 
 ```sh
-scripts/check-x301-long.sh
+scripts/run-authoritative-gate.sh archive <trusted-sha256> check-x301-long
 ```
 
 Repository text MUST retain only unique normative requirements, formats,
