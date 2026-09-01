@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-test -e /run/.containerenv || {
+test -e /run/.containerenv || test -e /.dockerenv || {
     echo 'this test may run only inside a disposable container' >&2
     exit 2
 }

@@ -7,7 +7,7 @@ INSTALLED=/usr/share/x301-openssl-provider/opensslcnf-x301.config
 ACTIVE=/etc/crypto-policies/local.d/opensslcnf-zz-x301.config
 BACKEND=/etc/crypto-policies/back-ends/opensslcnf.config
 
-test -e /run/.containerenv || {
+test -e /run/.containerenv || test -e /.dockerenv || {
     echo 'this test may run only inside a disposable container' >&2
     exit 2
 }
