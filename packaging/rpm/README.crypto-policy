@@ -1,0 +1,20 @@
+X301 crypto-policy integration
+==============================
+
+Installing x301-openssl-provider activates the provider system-wide and adds
+X301MLKEM1024 and X301 ahead of the selected crypto-policy TLS group list.
+This is an explicit opt-in to experimental, non-standardized algorithms.
+
+The package is not compatible with claims that FIPS, BSI, EMPTY, GOST-only or
+another restrictive policy contains only its named algorithms. X301 and
+X301MLKEM1024 are not FIPS validated.
+
+Use the package helper for policy transitions:
+
+    sudo x301-crypto-policy set DEFAULT
+    sudo x301-crypto-policy set EMPTY
+
+Direct calls to update-crypto-policies bypass this safeguard. If reconciliation
+fails, do not restart OpenSSL consumers until `x301-crypto-policy reconcile`
+succeeds. Restart long-running OpenSSL applications after installation,
+removal, policy changes or configuration upgrades.

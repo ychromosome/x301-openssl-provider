@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+set -u -o pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+# The safety probe must always evaluate the installed system configuration,
+# never a caller-supplied OpenSSL configuration or module directory.
+for variable_name in "${!OPENSSL_@}"; do
+    unset "$variable_name"
+done
+
+overlay=/etc/crypto-policies/local.d/opensslcnf-zz-x301.config
+backend=/etc/crypto-policies/back-ends/opensslcnf.config
+update=/usr/bin/update-crypto-policies
+probe=/usr/libexec/x301-openssl-policy-probe
+lock_file=/run/lock/x301-crypto-policy.lock
+
+active_line='Groups = *?X301MLKEM1024:?X301/${x301_policy_capture::base_groups}'
+disabled_line='# X301-GROUPS-DISABLED Groups = *?X301MLKEM1024:?X301/${x301_policy_capture::base_groups}'
+capture_line='base_groups = ${crypto_policy::Groups}'
+active_groups_prefix='*?X301MLKEM1024:?X301/'
+
+transaction_active=0
+rollback_policy=
+temporary_file=
+
+die() {
+    printf 'x301-crypto-policy: %s\n' "$*" >&2
+    exit 1
+}
+
+usage() {
+    printf '%s\n' \
+        'usage: x301-crypto-policy set POLICY' \
+        '       x301-crypto-policy reconcile' \
+        '       x301-crypto-policy enable' \
+        '       x301-crypto-policy disable' \
+        '       x301-crypto-policy status' >&2
+    exit 2
+}
+
+overlay_state() {
+    /usr/bin/awk -v active="$active_line" -v disabled="$disabled_line" \
+            -v capture="$capture_line" '
+        /^[[:space:]]*\[[^][]+\][[:space:]]*$/ {
+            section = $0
+            sub(/^[[:space:]]*\[/, "", section)
+            sub(/\][[:space:]]*$/, "", section)
+            header_count++
+            if (section == "x301_policy_capture") {
+                capture_section_count++
+                capture_section_index = header_count
+            } else if (section == "crypto_policy") {
+                policy_section_count++
+                policy_section_index = header_count
+            }
+            next
+        }
+        /^[[:space:]]*base_groups[[:space:]]*=/ {
+            capture_assignment_count++
+        }
+        /^[[:space:]]*Groups[[:space:]]*=/ {
+            groups_assignment_count++
+        }
+        $0 == capture {
+            capture_count++
+            if (section == "x301_policy_capture") capture_in_section++
+        }
+        $0 == active {
+            active_count++
+            if (section == "crypto_policy") active_in_policy++
+        }
+        $0 == disabled {
+            disabled_count++
+            if (section == "crypto_policy") disabled_in_policy++
+        }
+        END {
+            structure_ok = header_count == 2 &&
+                capture_section_count == 1 && capture_section_index == 1 &&
+                policy_section_count == 1 && policy_section_index == 2 &&
+                capture_assignment_count == 1 && capture_count == 1 &&
+                capture_in_section == 1
+            if (structure_ok && active_count == 1 &&
+                    active_in_policy == 1 && disabled_count == 0 &&
+                    groups_assignment_count == 1) print "active"
+            else if (structure_ok && active_count == 0 &&
+                    disabled_count == 1 && disabled_in_policy == 1 &&
+                    groups_assignment_count == 0) print "disabled"
+            else exit 1
+        }
+    ' "$overlay"
+}
+
+set_overlay_state() {
+    local requested=$1
+    local replacement current
+
+    current=$(overlay_state) || return 1
+    [[ $requested == active || $requested == disabled ]] || return 1
+    [[ $current != "$requested" ]] || return 0
+    if [[ $requested == active ]]; then
+        replacement=$active_line
+    else
+        replacement=$disabled_line
+    fi
+
+    temporary_file=$(/usr/bin/mktemp "${overlay}.tmp.XXXXXX") || return 1
+    if ! /usr/bin/awk -v active="$active_line" -v disabled="$disabled_line" \
+            -v replacement="$replacement" '
+                /^[[:space:]]*\[[^][]+\][[:space:]]*$/ {
+                    section = $0
+                    sub(/^[[:space:]]*\[/, "", section)
+                    sub(/\][[:space:]]*$/, "", section)
+                    print
+                    next
+                }
+                $0 == active || $0 == disabled {
+                    matched++
+                    if (section != "crypto_policy") {
+                        print
+                        next
+                    }
+                    print replacement
+                    changed++
+                    next
+                }
+                { print }
+                END { if (matched != 1 || changed != 1) exit 1 }
+            ' "$overlay" >"$temporary_file"; then
+        /usr/bin/rm -f -- "$temporary_file"
+        temporary_file=
+        return 1
+    fi
+    if ! /usr/bin/chmod --reference="$overlay" "$temporary_file" ||
+            ! /usr/bin/chown --reference="$overlay" "$temporary_file" ||
+            ! /usr/bin/touch --reference="$overlay" "$temporary_file"; then
+        /usr/bin/rm -f -- "$temporary_file"
+        temporary_file=
+        return 1
+    fi
+    if command -v chcon >/dev/null 2>&1; then
+        chcon --reference="$overlay" "$temporary_file" 2>/dev/null || true
+    fi
+    if ! /usr/bin/mv -f -- "$temporary_file" "$overlay"; then
+        /usr/bin/rm -f -- "$temporary_file"
+        temporary_file=
+        return 1
+    fi
+    temporary_file=
+    [[ $(overlay_state) == "$requested" ]]
+}
+
+base_groups() {
+    local output
+
+    output=$("$probe" --allow-no-cipher --effective-groups) || return 1
+    /usr/bin/awk '
+        /^effective_groups=/ {
+            value = substr($0, length("effective_groups=") + 1)
+            found++
+        }
+        END {
+            if (found != 1) exit 1
+            print value
+        }
+    ' <<<"$output"
+}
+
+run_base_probe() {
+    local groups=$1
+
+    if [[ -z $groups ]]; then
+        "$probe" --allow-no-cipher --expect-groups ''
+    else
+        "$probe" --expect-groups "$groups"
+    fi
+}
+
+run_active_probe() {
+    local groups=$1
+
+    [[ -n $groups ]] || return 1
+    "$probe" --expect-groups "${active_groups_prefix}${groups}"
+}
+
+regenerate() {
+    "$update" && "$update" --check
+}
+
+rollback_fail_closed() {
+    local original_status=$?
+
+    trap - EXIT HUP INT TERM
+    if [[ -n $temporary_file ]]; then
+        /usr/bin/rm -f -- "$temporary_file"
+    fi
+    if ((transaction_active)); then
+        set_overlay_state disabled >/dev/null 2>&1 ||
+            printf '%s\n' \
+                'x301-crypto-policy: fail-closed overlay disable failed' >&2
+        if [[ -n $rollback_policy ]]; then
+            "$update" --set "$rollback_policy" >/dev/null 2>&1 ||
+                printf '%s\n' \
+                    'x301-crypto-policy: crypto-policy rollback failed' >&2
+        else
+            "$update" >/dev/null 2>&1 ||
+                printf '%s\n' \
+                    'x301-crypto-policy: base-policy regeneration failed' >&2
+        fi
+    fi
+    exit "$original_status"
+}
+
+finish_reconcile() {
+    local groups
+
+    groups=$(base_groups) || die 'cannot read final base Groups value'
+    if [[ -z $groups ]]; then
+        run_base_probe "$groups" || die 'SSL_CTX base-policy probe failed'
+        transaction_active=0
+        printf '%s\n' 'overlay=disabled-empty-groups'
+        return 0
+    fi
+
+    set_overlay_state active || die 'cannot enable X301 Groups overlay'
+    regenerate || die 'cannot regenerate policy with X301 Groups overlay'
+    run_active_probe "$groups" || die 'SSL_CTX X301-overlay probe failed'
+    transaction_active=0
+    printf '%s\n' 'overlay=active'
+}
+
+reconcile_current() {
+    rollback_policy=$("$update" --show) || die 'cannot read selected policy'
+    transaction_active=1
+    set_overlay_state disabled || die 'cannot disable X301 Groups overlay'
+    regenerate || die 'cannot regenerate base policy'
+    finish_reconcile
+}
+
+disable_current() {
+    local groups
+
+    rollback_policy=$("$update" --show) || die 'cannot read selected policy'
+    transaction_active=1
+    set_overlay_state disabled || die 'cannot disable X301 Groups overlay'
+    regenerate || die 'cannot regenerate base policy'
+    groups=$(base_groups) || die 'cannot read final base Groups value'
+    run_base_probe "$groups" || die 'SSL_CTX base-policy probe failed'
+    transaction_active=0
+    printf '%s\n' 'overlay=disabled'
+}
+
+set_policy() {
+    local policy=$1
+
+    [[ $policy =~ ^[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*$ ]] ||
+        die "invalid policy name: $policy"
+    rollback_policy=$("$update" --show) || die 'cannot read selected policy'
+    transaction_active=1
+    set_overlay_state disabled || die 'cannot disable X301 Groups overlay'
+    "$update" --set "$policy" || die "cannot select policy: $policy"
+    "$update" --check || die "generated base policy is inconsistent: $policy"
+    finish_reconcile
+}
+
+((EUID == 0)) || die 'must be run as root'
+[[ -x $update ]] || die "missing update tool: $update"
+[[ -x $probe ]] || die "missing SSL_CTX probe: $probe"
+[[ -f $overlay ]] || die "missing package overlay: $overlay"
+[[ -f $backend ]] || die "missing generated backend: $backend"
+
+/usr/bin/mkdir -p -m 0755 -- "${lock_file%/*}" ||
+    die "cannot create lock directory: ${lock_file%/*}"
+exec 9>"$lock_file" || die "cannot open lock: $lock_file"
+/usr/bin/flock -x 9 || die "cannot lock: $lock_file"
+overlay_state >/dev/null ||
+    die 'overlay does not contain exactly one canonical Groups line in the crypto_policy section'
+
+trap rollback_fail_closed EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+case ${1:-} in
+    set)
+        (($# == 2)) || usage
+        set_policy "$2"
+        ;;
+    reconcile|enable)
+        (($# == 1)) || usage
+        reconcile_current
+        ;;
+    disable)
+        (($# == 1)) || usage
+        disable_current
+        ;;
+    status)
+        (($# == 1)) || usage
+        printf 'overlay=%s\n' "$(overlay_state)"
+        printf 'policy=%s\n' "$("$update" --show)"
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+transaction_active=0
+trap - EXIT HUP INT TERM
+exit 0
