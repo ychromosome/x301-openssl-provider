@@ -248,9 +248,9 @@ awk '
             exit 1
         count++
     }
-    END { if (count != 2) exit 1 }
+    END { if (count != 4) exit 1 }
 ' "$ROOT/.github/workflows/ci.yml" || {
-    echo "CI actions are not pinned to two exact commits" >&2
+    echo "CI actions are not pinned to four exact commits" >&2
     exit 1
 }
 grep -Fqx '          toolchain: 1.98.0' \
@@ -267,4 +267,4 @@ toolchain_line=$(grep -n 'dtolnay/rust-toolchain@' \
 test "$checkout_line" -lt "$verify_line"
 test "$verify_line" -lt "$toolchain_line"
 
-printf 'source_tree_gate_regressions=PASS cases=19 cargo_path_cases=7 ci_pins=2\n'
+printf 'source_tree_gate_regressions=PASS cases=19 cargo_path_cases=7 ci_pins=4\n'

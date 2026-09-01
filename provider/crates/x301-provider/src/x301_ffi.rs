@@ -9,16 +9,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crypto_bigint::CtEq;
 use ed301_eddsa::x301::{
-    PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, public_from_secret, shared_secret,
-    validate_public_encoding,
+    PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, canonicalize_public_encoding, public_from_secret,
+    shared_secret, validate_public_encoding,
 };
 use zeroize::Zeroize;
-
-const FIELD_MODULUS: [u8; PUBLIC_BYTES] = [
-    0xb3, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff, 0xff, 0x1f,
-];
 
 /// Function table consumed by the C provider shim.
 #[repr(C)]
@@ -236,12 +230,11 @@ unsafe extern "C" fn key_import(
             },
             None => None,
         };
-        if let Some(public) = raw_public.as_ref() {
-            if let Some(derived) = derived_public.as_ref()
-                && !bytes_equal(derived, public)
-            {
-                return 0;
-            }
+        if let Some(public) = raw_public.as_ref()
+            && let Some(derived) = derived_public.as_ref()
+            && !bytes_equal(derived, public)
+        {
+            return 0;
         }
 
         let replacement = X301Key {
@@ -574,20 +567,6 @@ fn bytes_equal<const N: usize>(left: &[u8; N], right: &[u8; N]) -> bool {
     left.ct_eq(right).to_bool()
 }
 
-fn canonicalize_public_bytes(mut encoded: [u8; PUBLIC_BYTES]) -> [u8; PUBLIC_BYTES] {
-    encoded[PUBLIC_BYTES - 1] &= 0x1f;
-
-    let mut reduced = [0_u8; PUBLIC_BYTES];
-    let mut borrow = 0_u16;
-    for index in 0..PUBLIC_BYTES {
-        let left = u16::from(encoded[index]);
-        let right = u16::from(FIELD_MODULUS[index]) + borrow;
-        reduced[index] = left.wrapping_sub(right) as u8;
-        borrow = u16::from(left < right);
-    }
-    if borrow == 0 { reduced } else { encoded }
-}
-
 unsafe fn read_optional_public(
     input: *const u8,
     input_len: usize,
@@ -601,7 +580,7 @@ unsafe fn read_optional_public(
     let mut encoded = [0_u8; PUBLIC_BYTES];
     // SAFETY: The caller guarantees `input_len` readable bytes.
     unsafe { core::ptr::copy_nonoverlapping(input, encoded.as_mut_ptr(), PUBLIC_BYTES) };
-    Some(Some(canonicalize_public_bytes(encoded)))
+    canonicalize_public_encoding(&encoded).ok().map(Some)
 }
 
 unsafe fn read_optional_secret(input: *const u8, input_len: usize) -> Option<Option<SecretBytes>> {

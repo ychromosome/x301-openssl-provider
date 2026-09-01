@@ -59,8 +59,6 @@ pub enum X301Error {
     InvalidSecretLength,
     /// The encoded peer coordinate is not exactly 38 bytes.
     InvalidPublicLength,
-    /// Reserved for compatibility; exact-length inputs canonicalize under D2.
-    NonCanonicalPublic,
     /// The completed ladder produced the all-zero shared secret.
     AllZeroSharedSecret,
 }
@@ -123,11 +121,11 @@ pub fn shared_secret(secret: &[u8], peer_public: &[u8]) -> Result<SharedSecret, 
 /// Validate D2 length. Main-curve and twist inputs are accepted; D4 rejection
 /// occurs after the ladder.
 pub fn validate_public_encoding(public: &[u8]) -> Result<(), X301Error> {
-    decode_public(public).map(|_| ())
+    canonicalize_public_encoding(public).map(|_| ())
 }
 
-#[cfg(test)]
-pub(crate) fn canonicalize_public_encoding(public: &[u8]) -> Result<[u8; PUBLIC_BYTES], X301Error> {
+/// Decode and return the unique canonical D2 representation.
+pub fn canonicalize_public_encoding(public: &[u8]) -> Result<[u8; PUBLIC_BYTES], X301Error> {
     decode_public(public).map(Fe301::to_canonical_bytes)
 }
 
