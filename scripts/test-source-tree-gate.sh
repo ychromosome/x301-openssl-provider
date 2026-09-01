@@ -267,4 +267,20 @@ toolchain_line=$(grep -n 'dtolnay/rust-toolchain@' \
 test "$checkout_line" -lt "$verify_line"
 test "$verify_line" -lt "$toolchain_line"
 
-printf 'source_tree_gate_regressions=PASS cases=19 cargo_path_cases=7 ci_pins=5\n'
+for removed in \
+        provider/crates/ed301-eddsa-provider \
+        provider-tests/provider_signature.c \
+        scripts/test-provider.sh; do
+    test ! -e "$ROOT/$removed" || {
+        echo "stale Ed301 signature-provider path remains: $removed" >&2
+        exit 1
+    }
+done
+if grep -R -E 'ed301_eddsa_draft00|ED301D00|0xFE84' \
+        "$ROOT/provider" "$ROOT/provider-tests" >/dev/null;
+then
+    echo 'X301 product paths advertise the frozen Ed301 identity' >&2
+    exit 1
+fi
+
+printf 'source_tree_gate_regressions=PASS cases=20 cargo_path_cases=7 ci_pins=5\n'
