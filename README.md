@@ -4,7 +4,7 @@ This repository contains experimental implementations of:
 
 - Ed301-EdDSA `KEYMGMT` and `SIGNATURE`;
 - X301 `KEYMGMT` and `KEYEXCH`; and
-- the private-use TLS 1.3 group `MLKEM1024X301`.
+- the private-use TLS 1.3 group `X301MLKEM1024`.
 
 The source is not approved for production use. NamedGroup `0xFE2E` is
 test-only and is not an IANA allocation. Remaining gates are listed in
@@ -20,7 +20,7 @@ Derivation rejects an all-zero result.
 Ed301 and X301 use separate key types and keys. X301 reuses the safe-Rust
 Ed301 5x64 field backend. Every derive uses the same Montgomery ladder.
 
-MLKEM1024X301 fetches `ML-KEM-1024` through EVP in the provider child library
+X301MLKEM1024 fetches `ML-KEM-1024` through EVP in the provider child library
 context. This repository contains no ML-KEM implementation or hybrid KDF.
 
 | Value | Layout | Bytes |
@@ -39,7 +39,7 @@ OpenSSL deviations are in `docs/X301_CONSTRUCTION_REGISTER.md` and
 | --- | --- | --- |
 | Ed301 | `ed301_eddsa_draft00.so` | `KEYMGMT`, `SIGNATURE` |
 | X301 raw | `x301-raw.so` | `KEYMGMT`, `KEYEXCH` |
-| X301 hybrid | `x301.so` | X301 plus `MLKEM1024X301` |
+| X301 hybrid | `x301.so` | X301 plus `X301MLKEM1024` |
 
 Modules accept the OpenSSL ABI major used at build time: 3 or 4. The tested
 reference lanes are 3.5.7 and 4.0.1.

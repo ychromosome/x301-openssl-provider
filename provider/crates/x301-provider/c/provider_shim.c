@@ -34,8 +34,8 @@
 #define X301_BITS 301
 #define X301_SECURITY_BITS 149
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
-# define MLKEM1024_X301_SECURITY_BITS 256
-# define MLKEM1024_X301_TLS_GROUP_ID ((unsigned int)0xfe2e)
+# define X301_MLKEM1024_SECURITY_BITS 256
+# define X301_MLKEM1024_TLS_GROUP_ID ((unsigned int)0xfe2e)
 # define X301_TLS_VERSION_1_3 0x0304
 #endif
 
@@ -47,7 +47,7 @@ static const char X301_PROVIDER_NAME[] = "X301 Experimental Provider";
 static const char X301_PROVIDER_VERSION[] = "0.1.0";
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
 static const char X301_PROVIDER_BUILDINFO[] =
-    "raw X301-v1 plus MLKEM1024X301 KEYMGMT/KEM/TLS-GROUP";
+    "raw X301-v1 plus X301MLKEM1024 KEYMGMT/KEM/TLS-GROUP";
 #else
 static const char X301_PROVIDER_BUILDINFO[] =
     "raw X301-v1 KEYMGMT/KEYEXCH";
@@ -55,8 +55,8 @@ static const char X301_PROVIDER_BUILDINFO[] =
 static const char X301_NAME[] = "X301";
 static const char X301_ALGORITHM_NAMES[] = "X301";
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
-static const char MLKEM1024_X301_NAME[] = "MLKEM1024X301";
-static const char MLKEM1024_X301_ALGORITHM_NAMES[] = "MLKEM1024X301";
+static const char X301_MLKEM1024_NAME[] = "X301MLKEM1024";
+static const char X301_MLKEM1024_ALGORITHM_NAMES[] = "X301MLKEM1024";
 #endif
 static const char X301_PROPERTIES[] = "provider=x301";
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
@@ -940,10 +940,10 @@ static const OSSL_ALGORITHM X301_KEYMGMT_ALGORITHMS[] = {
     },
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
     {
-        MLKEM1024_X301_ALGORITHM_NAMES,
+        X301_MLKEM1024_ALGORITHM_NAMES,
         X301_PROPERTIES,
-        MLKEM1024_X301_KEYMGMT_DISPATCH,
-        "TLS MLKEM1024X301 key-management substrate"
+        X301_MLKEM1024_KEYMGMT_DISPATCH,
+        "TLS X301MLKEM1024 key-management substrate"
     },
 #endif
     { NULL, NULL, NULL, NULL }
@@ -962,10 +962,10 @@ static const OSSL_ALGORITHM X301_KEYEXCH_ALGORITHMS[] = {
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
 static const OSSL_ALGORITHM X301_KEM_ALGORITHMS[] = {
     {
-        MLKEM1024_X301_ALGORITHM_NAMES,
+        X301_MLKEM1024_ALGORITHM_NAMES,
         X301_PROPERTIES,
-        MLKEM1024_X301_KEM_DISPATCH,
-        "TLS MLKEM1024X301 KEM substrate"
+        X301_MLKEM1024_KEM_DISPATCH,
+        "TLS X301MLKEM1024 KEM substrate"
     },
     { NULL, NULL, NULL, NULL }
 };
@@ -982,22 +982,22 @@ static int x301_provider_get_capabilities(
     int maximum_tls = X301_TLS_VERSION_1_3;
     int minimum_dtls = -1;
     int maximum_dtls = -1;
-    unsigned int hybrid_group_id = MLKEM1024_X301_TLS_GROUP_ID;
-    unsigned int hybrid_security_bits = MLKEM1024_X301_SECURITY_BITS;
+    unsigned int hybrid_group_id = X301_MLKEM1024_TLS_GROUP_ID;
+    unsigned int hybrid_security_bits = X301_MLKEM1024_SECURITY_BITS;
     unsigned int hybrid_is_kem = 1;
     OSSL_PARAM hybrid_group_parameters[] = {
         OSSL_PARAM_utf8_string(
             OSSL_CAPABILITY_TLS_GROUP_NAME,
-            (char *)MLKEM1024_X301_NAME,
-            sizeof(MLKEM1024_X301_NAME)),
+            (char *)X301_MLKEM1024_NAME,
+            sizeof(X301_MLKEM1024_NAME)),
         OSSL_PARAM_utf8_string(
             OSSL_CAPABILITY_TLS_GROUP_NAME_INTERNAL,
-            (char *)MLKEM1024_X301_NAME,
-            sizeof(MLKEM1024_X301_NAME)),
+            (char *)X301_MLKEM1024_NAME,
+            sizeof(X301_MLKEM1024_NAME)),
         OSSL_PARAM_utf8_string(
             OSSL_CAPABILITY_TLS_GROUP_ALG,
-            (char *)MLKEM1024_X301_NAME,
-            sizeof(MLKEM1024_X301_NAME)),
+            (char *)X301_MLKEM1024_NAME,
+            sizeof(X301_MLKEM1024_NAME)),
         OSSL_PARAM_uint(OSSL_CAPABILITY_TLS_GROUP_ID, &hybrid_group_id),
         OSSL_PARAM_uint(
             OSSL_CAPABILITY_TLS_GROUP_SECURITY_BITS,

@@ -1,5 +1,5 @@
 /*
- * Coverage-guided EVP fuzz target for X301 and MLKEM1024X301.
+ * Coverage-guided EVP fuzz target for X301 and X301MLKEM1024.
  *
  * This test uses public OpenSSL APIs only. It exercises arbitrary-length and
  * exact-length mutations at the Rust/C provider boundary; it does not define
@@ -20,7 +20,7 @@
 #define X301_PROVIDER "x301"
 #define X301_PROPERTIES "provider=x301"
 #define X301_NAME "X301"
-#define HYBRID_NAME "MLKEM1024X301"
+#define HYBRID_NAME "X301MLKEM1024"
 #define X301_BYTES 38U
 #define HYBRID_PUBLIC_BYTES 1606U
 #define HYBRID_CIPHERTEXT_BYTES 1606U

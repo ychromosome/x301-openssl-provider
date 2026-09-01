@@ -68,7 +68,7 @@ X301 arithmetic source was imported from the historical donor repository.
 The independent Python implementation under `reference/x301/` is test-only
 and is not linked into the product.
 
-MLKEM1024X301 follows the published TLS hybrid construction named in
+X301MLKEM1024 follows the published TLS hybrid construction named in
 `docs/X301_DRAFT.md`. ML-KEM-1024 is fetched through EVP in the provider child
 library context, whose provider/property policy selects the implementation.
 This repository contains no ML-KEM implementation, copied ML-KEM subroutine,

@@ -217,7 +217,7 @@ if [[ $OPERATION == keygen || $OPERATION == derive-setup \
         || $OPERATION == derive-steady ]]; then
     TARGET_ALGORITHM=X301; TARGET_PROPERTIES=provider=x301; TARGET_BYTES=38
 else
-    TARGET_ALGORITHM=MLKEM1024X301; TARGET_PROPERTIES=provider=x301; TARGET_BYTES=0
+    TARGET_ALGORITHM=X301MLKEM1024; TARGET_PROPERTIES=provider=x301; TARGET_BYTES=0
 fi
 round=1
 while (( round <= 4 )); do

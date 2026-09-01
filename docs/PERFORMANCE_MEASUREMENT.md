@@ -35,7 +35,7 @@ performance finding. Absolute values and cross-session comparisons never meet
 that rule by themselves.
 
 `scripts/run-x301-comparative-benchmark.sh` measures the current X301,
-MLKEM1024X301 and Ed301 artifacts beside OpenSSL's X25519, X448, ML-KEM and
+X301MLKEM1024 and Ed301 artifacts beside OpenSSL's X25519, X448, ML-KEM and
 EdDSA controls. It copies and hashes the runner, sources, compiler, OpenSSL
 libraries, provider modules, source manifest, lane manifest, raw logs and
 derived table. Before creating an output directory it verifies the selected

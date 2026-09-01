@@ -6,7 +6,7 @@ Date: 2026-08-27
 | --- | --- |
 | Ed301-EdDSA | Experimental integration dependency |
 | X301 | Experimental review candidate |
-| MLKEM1024X301 | Experimental private-use TLS integration |
+| X301MLKEM1024 | Experimental private-use TLS integration |
 
 Before a candidate freeze, the final source bytes still require:
 

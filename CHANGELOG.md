@@ -6,7 +6,7 @@
   `p` once when necessary. Imports store and export the canonical coordinate.
   Post-ladder all-zero rejection is unchanged.
 - Added X301 KEYMGMT/KEYEXCH and the private-use TLS 1.3 group
-  `MLKEM1024X301`. ML-KEM-1024 is fetched through OpenSSL EVP. Shares and
+  `X301MLKEM1024`. ML-KEM-1024 is fetched through OpenSSL EVP. Shares and
   secrets are concatenated ML-KEM first; the project adds no hybrid KDF.
 - X301 key generation uses the existing constant-time Ed301 fixed-base table
   and a one-inversion projective Edwards-to-Montgomery map. The previous

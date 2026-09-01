@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Extract an MLKEM1024X301 KeyShare from OpenSSL ``-msg`` output.
+"""Extract an X301MLKEM1024 KeyShare from OpenSSL ``-msg`` output.
 
 Contract sources: RFC 9846 Section 4.3.8 defines the TLS 1.3 ClientHello
 KeyShare encoding and forbids reuse of a locally generated KeyShare; RFC 10024
@@ -135,10 +135,10 @@ def x301_hybrid_keyshare(client_hello: bytes) -> bytes:
         if int.from_bytes(raw_group, "big") == GROUP_ID:
             matches.append(key_exchange)
     if len(matches) != 1:
-        raise ParseError(f"found {len(matches)} MLKEM1024X301 KeyShare entries")
+        raise ParseError(f"found {len(matches)} X301MLKEM1024 KeyShare entries")
     if len(matches[0]) != HYBRID_PUBLIC_BYTES:
         raise ParseError(
-            f"MLKEM1024X301 KeyShare is {len(matches[0])} bytes, "
+            f"X301MLKEM1024 KeyShare is {len(matches[0])} bytes, "
             f"expected {HYBRID_PUBLIC_BYTES}"
         )
     return matches[0]
@@ -171,10 +171,10 @@ def x301_hybrid_server_keyshare(server_hello: bytes) -> bytes:
         if int.from_bytes(raw_group, "big") == GROUP_ID:
             matches.append(key_exchange)
     if len(matches) != 1:
-        raise ParseError(f"found {len(matches)} MLKEM1024X301 server KeyShare entries")
+        raise ParseError(f"found {len(matches)} X301MLKEM1024 server KeyShare entries")
     if len(matches[0]) != HYBRID_PUBLIC_BYTES:
         raise ParseError(
-            f"MLKEM1024X301 server KeyShare is {len(matches[0])} bytes, "
+            f"X301MLKEM1024 server KeyShare is {len(matches[0])} bytes, "
             f"expected {HYBRID_PUBLIC_BYTES}"
         )
     return matches[0]

@@ -1,5 +1,5 @@
 /*
- * Verify the property boundary of nested ML-KEM fetches in MLKEM1024X301.
+ * Verify the property boundary of nested ML-KEM fetches in X301MLKEM1024.
  * The probe providers implement only test KEYMGMT key generation; no
  * cryptographic operation or wire format is defined here.
  */
@@ -16,7 +16,7 @@
 #include <openssl/params.h>
 #include <openssl/provider.h>
 
-#define HYBRID_NAME "MLKEM1024X301"
+#define HYBRID_NAME "X301MLKEM1024"
 #define MLKEM_NAME "ML-KEM-1024"
 #define X301_NAME "X301"
 #define X301_BYTES 38U

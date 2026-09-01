@@ -29,7 +29,7 @@ only to keep the same collision and non-reuse discipline:
 
 | Codepoint | Assignment | Date | State and rationale |
 | --- | --- | --- | --- |
-| `0xFE2E` | MLKEM1024X301 TLS 1.3 NamedGroup | 2026-08-25 | Active experimental private use. Required for the in-project OpenSSL 3.5.7/4.0.1 handshake matrix; never present as an IANA or public-interoperability claim. ML-KEM-first layouts are fixed by `X301_DRAFT.md`. |
+| `0xFE2E` | X301MLKEM1024 TLS 1.3 NamedGroup | 2026-08-25 | Active experimental private use. Required for the in-project OpenSSL 3.5.7/4.0.1 handshake matrix; never present as an IANA or public-interoperability claim. ML-KEM-first layouts are fixed by `X301_DRAFT.md`. |
 
 RFC 9846 Section 4.3.7 records `0xFE00` through `0xFEFF` as the ECDHE
 private-use range. The value can therefore collide with unrelated private

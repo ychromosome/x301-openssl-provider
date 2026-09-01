@@ -1,5 +1,5 @@
 /*
- * Minimal MLKEM1024X301 substrate for OpenSSL TLS 1.3.
+ * Minimal X301MLKEM1024 substrate for OpenSSL TLS 1.3.
  *
  * Sources: OpenSSL provider-base(7) "TLS-GROUP", provider-keymgmt(7), and
  * provider-kem(7); FIPS 203 through OpenSSL's EVP ML-KEM-1024
@@ -27,7 +27,7 @@
 #define HYBRID_BITS 1024
 #define HYBRID_SECURITY_BITS 256
 
-static const char HYBRID_NAME[] = "MLKEM1024X301";
+static const char HYBRID_NAME[] = "X301MLKEM1024";
 static const char ML_NAME[] = "ML-KEM-1024";
 enum { KEY_EMPTY, KEY_PUBLIC, KEY_PRIVATE };
 enum { KEM_NONE, KEM_ENCAPSULATE, KEM_DECAPSULATE };
@@ -151,7 +151,7 @@ static void *hybrid_key_new(void *provider_context)
 
     if (key == NULL) {
         X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
-            "MLKEM1024X301 key allocation failed");
+            "X301MLKEM1024 key allocation failed");
         return NULL;
     }
     key->provider = provider;
@@ -211,7 +211,7 @@ static int hybrid_key_get_params(void *key_data, OSSL_PARAM params[])
             OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_MAX_SIZE),
             (int)HYBRID_CIPHERTEXT_BYTES)) {
         X301_RAISE(key->provider, X301_R_INVALID_PARAMETER,
-            "invalid MLKEM1024X301 key parameter query");
+            "invalid X301MLKEM1024 key parameter query");
         return 0;
     }
     encoded = OSSL_PARAM_locate(params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY);
@@ -223,13 +223,13 @@ static int hybrid_key_get_params(void *key_data, OSSL_PARAM params[])
                key->x301, public_key + ML_PUBLIC_BYTES, X_BYTES)
             != 1) {
         X301_RAISE(key->provider, X301_R_INVALID_KEY,
-            "MLKEM1024X301 public key is unavailable");
+            "X301MLKEM1024 public key is unavailable");
         return 0;
     }
     if (!x301_param_set_optional_octet_string(
             encoded, public_key, sizeof(public_key))) {
         X301_RAISE(key->provider, X301_R_INVALID_PARAMETER,
-            "invalid MLKEM1024X301 encoded-public-key output parameter");
+            "invalid X301MLKEM1024 encoded-public-key output parameter");
         return 0;
     }
     return 1;
@@ -257,7 +257,7 @@ static int hybrid_key_set_params(void *key_data, const OSSL_PARAM params[])
             params, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
             &public_key, &public_length, HYBRID_PUBLIC_BYTES, 0)) {
         X301_RAISE(key->provider, X301_R_INVALID_PARAMETER,
-            "invalid MLKEM1024X301 encoded public key parameter");
+            "invalid X301MLKEM1024 encoded public key parameter");
         return 0;
     }
     if (public_key == NULL)
@@ -268,14 +268,14 @@ static int hybrid_key_set_params(void *key_data, const OSSL_PARAM params[])
         goto cleanup;
     if (x301 == NULL) {
         X301_RAISE(key->provider, X301_R_ALLOCATION_FAILURE,
-            "MLKEM1024X301 X301 key allocation failed");
+            "X301MLKEM1024 X301 key allocation failed");
         goto cleanup;
     }
     if (key->provider->rust->key_set_encoded_public(
             x301, public_key + ML_PUBLIC_BYTES, X_BYTES)
         != 1) {
         X301_RAISE(key->provider, X301_R_INVALID_KEY,
-            "invalid X301 component in MLKEM1024X301 public key");
+            "invalid X301 component in X301MLKEM1024 public key");
         goto cleanup;
     }
     key->mlkem = mlkem;
@@ -313,13 +313,13 @@ static void *hybrid_gen_init(
         return NULL;
     if ((!keypair && !parameters) || !group_matches(params)) {
         X301_RAISE(provider, X301_R_INVALID_PARAMETER,
-            "invalid MLKEM1024X301 generation parameters");
+            "invalid X301MLKEM1024 generation parameters");
         return NULL;
     }
     generation = hybrid_alloc(provider, sizeof(*generation));
     if (generation == NULL) {
         X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
-            "MLKEM1024X301 generation-context allocation failed");
+            "X301MLKEM1024 generation-context allocation failed");
         return NULL;
     }
     generation->provider = provider;
@@ -366,7 +366,7 @@ static int hybrid_gen_set_params(
         return 0;
     if (!group_matches(params)) {
         X301_RAISE(generation->provider, X301_R_INVALID_PARAMETER,
-            "invalid MLKEM1024X301 generation group");
+            "invalid X301MLKEM1024 generation group");
         return 0;
     }
     return 1;
@@ -399,7 +399,7 @@ static void *hybrid_kem_new(void *provider_context)
 
     if (context == NULL) {
         X301_RAISE(provider, X301_R_ALLOCATION_FAILURE,
-            "MLKEM1024X301 KEM-context allocation failed");
+            "X301MLKEM1024 KEM-context allocation failed");
         return NULL;
     }
     context->provider = provider;
@@ -427,14 +427,14 @@ static int hybrid_kem_init(
         return 0;
     if (params != NULL && params[0].key != NULL) {
         X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
-            "MLKEM1024X301 KEM parameters are unsupported");
+            "X301MLKEM1024 KEM parameters are unsupported");
         return 0;
     }
     if (key == NULL || key->provider != context->provider
         || (operation == KEM_ENCAPSULATE && key->state < KEY_PUBLIC)
         || (operation == KEM_DECAPSULATE && key->state != KEY_PRIVATE)) {
         X301_RAISE(context->provider, X301_R_INVALID_KEY,
-            "invalid MLKEM1024X301 KEM key");
+            "invalid X301MLKEM1024 KEM key");
         return 0;
     }
     context->key = key;
@@ -481,13 +481,13 @@ static int hybrid_encapsulate(
         return 0;
     if (context->operation != KEM_ENCAPSULATE || context->key == NULL) {
         X301_RAISE(context->provider, X301_R_INVALID_STATE,
-            "MLKEM1024X301 encapsulation is not initialized");
+            "X301MLKEM1024 encapsulation is not initialized");
         return 0;
     }
     if (ciphertext == NULL) {
         if (ciphertext_length == NULL && shared_secret_length == NULL) {
             X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
-                "MLKEM1024X301 encapsulation length output is missing");
+                "X301MLKEM1024 encapsulation length output is missing");
             return 0;
         }
         if (ciphertext_length != NULL)
@@ -499,7 +499,7 @@ static int hybrid_encapsulate(
     if (ciphertext_length == NULL || shared_secret == NULL
         || shared_secret_length == NULL) {
         X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
-            "invalid MLKEM1024X301 encapsulation output");
+            "invalid X301MLKEM1024 encapsulation output");
         return 0;
     }
     if (*ciphertext_length < HYBRID_CIPHERTEXT_BYTES
@@ -507,7 +507,7 @@ static int hybrid_encapsulate(
         *ciphertext_length = HYBRID_CIPHERTEXT_BYTES;
         *shared_secret_length = HYBRID_SECRET_BYTES;
         X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
-            "MLKEM1024X301 encapsulation output buffer is too small");
+            "X301MLKEM1024 encapsulation output buffer is too small");
         return 0;
     }
 
@@ -534,7 +534,7 @@ static int hybrid_encapsulate(
         goto cleanup;
     if (exchange == NULL) {
         X301_RAISE(context->provider, X301_R_ALLOCATION_FAILURE,
-            "MLKEM1024X301 exchange-context allocation failed");
+            "X301MLKEM1024 exchange-context allocation failed");
         goto cleanup;
     }
     if (context->provider->rust->key_get_public(
@@ -551,7 +551,7 @@ static int hybrid_encapsulate(
                exchange, temporary_secret + ML_SECRET_BYTES, X_BYTES)
             != 1) {
         X301_RAISE(context->provider, X301_R_INTERNAL_ERROR,
-            "MLKEM1024X301 X301 encapsulation failed");
+            "X301MLKEM1024 X301 encapsulation failed");
         goto cleanup;
     }
 
@@ -590,13 +590,13 @@ static int hybrid_decapsulate(
         return 0;
     if (context->operation != KEM_DECAPSULATE || context->key == NULL) {
         X301_RAISE(context->provider, X301_R_INVALID_STATE,
-            "MLKEM1024X301 decapsulation is not initialized");
+            "X301MLKEM1024 decapsulation is not initialized");
         return 0;
     }
     if (shared_secret == NULL) {
         if (shared_secret_length == NULL) {
             X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
-                "MLKEM1024X301 decapsulation length output is missing");
+                "X301MLKEM1024 decapsulation length output is missing");
             return 0;
         }
         *shared_secret_length = HYBRID_SECRET_BYTES;
@@ -605,13 +605,13 @@ static int hybrid_decapsulate(
     if (shared_secret_length == NULL || ciphertext == NULL
         || ciphertext_length != HYBRID_CIPHERTEXT_BYTES) {
         X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
-            "invalid MLKEM1024X301 decapsulation input");
+            "invalid X301MLKEM1024 decapsulation input");
         return 0;
     }
     if (*shared_secret_length < HYBRID_SECRET_BYTES) {
         *shared_secret_length = HYBRID_SECRET_BYTES;
         X301_RAISE(context->provider, X301_R_INVALID_PARAMETER,
-            "MLKEM1024X301 decapsulation output buffer is too small");
+            "X301MLKEM1024 decapsulation output buffer is too small");
         return 0;
     }
 
@@ -634,7 +634,7 @@ static int hybrid_decapsulate(
     exchange = context->provider->rust->exchange_new();
     if (peer_x301 == NULL || exchange == NULL) {
         X301_RAISE(context->provider, X301_R_ALLOCATION_FAILURE,
-            "MLKEM1024X301 decapsulation-context allocation failed");
+            "X301MLKEM1024 decapsulation-context allocation failed");
         goto cleanup;
     }
     if (context->provider->rust->key_set_encoded_public(
@@ -650,7 +650,7 @@ static int hybrid_decapsulate(
                exchange, temporary_secret + ML_SECRET_BYTES, X_BYTES)
             != 1) {
         X301_RAISE(context->provider, X301_R_INVALID_KEY,
-            "invalid X301 component in MLKEM1024X301 ciphertext");
+            "invalid X301 component in X301MLKEM1024 ciphertext");
         goto cleanup;
     }
 
@@ -668,7 +668,7 @@ cleanup:
     return result;
 }
 
-const OSSL_DISPATCH MLKEM1024_X301_KEYMGMT_DISPATCH[] = {
+const OSSL_DISPATCH X301_MLKEM1024_KEYMGMT_DISPATCH[] = {
     { OSSL_FUNC_KEYMGMT_NEW, (void (*)(void))hybrid_key_new },
     { OSSL_FUNC_KEYMGMT_FREE, (void (*)(void))hybrid_key_free },
     { OSSL_FUNC_KEYMGMT_GEN_INIT, (void (*)(void))hybrid_gen_init },
@@ -688,7 +688,7 @@ const OSSL_DISPATCH MLKEM1024_X301_KEYMGMT_DISPATCH[] = {
     { 0, NULL }
 };
 
-const OSSL_DISPATCH MLKEM1024_X301_KEM_DISPATCH[] = {
+const OSSL_DISPATCH X301_MLKEM1024_KEM_DISPATCH[] = {
     { OSSL_FUNC_KEM_NEWCTX, (void (*)(void))hybrid_kem_new },
     { OSSL_FUNC_KEM_FREECTX, (void (*)(void))hybrid_kem_free },
     { OSSL_FUNC_KEM_ENCAPSULATE_INIT,

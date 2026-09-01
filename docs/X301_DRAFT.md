@@ -1,4 +1,4 @@
-# X301 and MLKEM1024X301 experimental profile
+# X301 and X301MLKEM1024 experimental profile
 
 Status: project draft, 2026-08-25. This is not an IETF or NIST standard and
 does not assign a public TLS codepoint. MUST, MUST NOT, SHOULD, and MAY apply
@@ -29,7 +29,7 @@ The provider profile has exactly two additions:
 
 1. `X301`, a provider KEYMGMT/KEYEXCH algorithm with 38-byte raw private,
    public and derived-secret values.
-2. `MLKEM1024X301`, a TLS 1.3 hybrid group advertised through OpenSSL's
+2. `X301MLKEM1024`, a TLS 1.3 hybrid group advertised through OpenSSL's
    `TLS-GROUP` capability.
 
 ML-KEM-1024 MUST be fetched through EVP in the provider child library context.
@@ -250,14 +250,14 @@ also forbids an application from importing the same 38 raw octets for both
 algorithms; type separation cannot detect deliberate caller-side byte reuse,
 so this remains an explicit protocol rule as well as a cross-type API test.
 
-## 7. MLKEM1024X301 TLS group
+## 7. X301MLKEM1024 TLS group
 
 ### 7.1 H1/H2: exact layout
 
 The ordered component sequence is ML-KEM-1024 followed by X301. The public name
-`MLKEM1024X301` and every byte concatenation follow that same order, as required
-by the general RFC 9954 naming convention. The historical
-`X25519MLKEM768` naming exception is not copied.
+`X301MLKEM1024` follows the established X-family names `X25519MLKEM768` from
+RFC 10024 and OpenSSL's `X448MLKEM1024`. As in those constructions, the name
+does not express the byte order: every concatenation remains ML-KEM first.
 
 | Value | Exact construction | Size |
 | --- | --- | ---: |

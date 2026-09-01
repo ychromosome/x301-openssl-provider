@@ -1,5 +1,5 @@
 /*
- * Direct EVP contract tests for the TLS-only MLKEM1024X301 substrate (T9).
+ * Direct EVP contract tests for the TLS-only X301MLKEM1024 substrate (T9).
  *
  * Sources:
  *   - FIPS 203 through the ML-KEM-1024 implementation selected by the child
@@ -31,7 +31,7 @@
 #define DEFAULT_PROPERTIES "provider=default"
 #define X301_NAME "X301"
 #define MLKEM_NAME "ML-KEM-1024"
-#define HYBRID_NAME "MLKEM1024X301"
+#define HYBRID_NAME "X301MLKEM1024"
 #define X301_BYTES 38U
 #define MLKEM_PUBLIC_BYTES 1568U
 #define MLKEM_CIPHERTEXT_BYTES 1568U
@@ -1195,15 +1195,15 @@ int main(int argc, char **argv)
         libctx, HYBRID_NAME, X301_PROPERTIES);
     hybrid_kem = EVP_KEM_fetch(libctx, HYBRID_NAME, X301_PROPERTIES);
     if (hybrid_keymgmt == NULL || hybrid_kem == NULL) {
-        fail("fetch minimal MLKEM1024X301 KEYMGMT/KEM substrate");
+        fail("fetch minimal X301MLKEM1024 KEYMGMT/KEM substrate");
         goto done;
     }
-    pass("fetch minimal MLKEM1024X301 KEYMGMT/KEM substrate");
+    pass("fetch minimal X301MLKEM1024 KEYMGMT/KEM substrate");
 
     legacy_keymgmt = EVP_KEYMGMT_fetch(
-        libctx, "X301MLKEM1024", X301_PROPERTIES);
+        libctx, "MLKEM1024X301", X301_PROPERTIES);
     legacy_kem = EVP_KEM_fetch(
-        libctx, "X301MLKEM1024", X301_PROPERTIES);
+        libctx, "MLKEM1024X301", X301_PROPERTIES);
     if (legacy_keymgmt != NULL || legacy_kem != NULL) {
         fail("obsolete hybrid name is rejected");
         goto done;
