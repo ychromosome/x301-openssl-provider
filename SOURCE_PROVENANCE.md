@@ -118,8 +118,8 @@ Imported relationships:
 
 | repository path | donor relationship |
 |---|---|
-| `provider/crates/ed301-eddsa-provider/` | adapted provider Rust/C source |
-| `provider-tests/` | adapted C harnesses and vector generator |
+| `provider/crates/x301-provider/` | X301 provider Rust/C source |
+| `provider-tests/x301/` | X301 EVP, hybrid, TLS and fuzz harnesses |
 | `scripts/provider-profile-guard.sh` | adapted profile-observation helper |
 | `scripts/build-openssl-provider-lane.sh` | adapted public-release builder |
 

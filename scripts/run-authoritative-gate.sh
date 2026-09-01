@@ -97,9 +97,6 @@ case "$GATE" in
     verify-openssl-provider-lane)
         TARGET=$ROOT/scripts/verify-openssl-provider-lane.sh
         ;;
-    test-provider)
-        TARGET=$ROOT/scripts/test-provider.sh
-        ;;
     test-x301-provider-contracts)
         if [ "${1:-}" = --result-root ] && [ "$#" -ge 2 ]; then
             X301_CONTRACT_RESULT_ROOT=$2

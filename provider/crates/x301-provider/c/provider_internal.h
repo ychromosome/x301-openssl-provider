@@ -14,12 +14,7 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/crypto.h>
 
-#include "../../ed301-eddsa-provider/c/param_helpers.h"
-
-#define x301_param_get_strict_octet_string ed301d00_param_get_strict_octet_string
-#define x301_param_set_optional_int ed301d00_param_set_optional_int
-#define x301_param_set_optional_octet_string ed301d00_param_set_optional_octet_string
-#define x301_param_set_optional_utf8_ptr ed301d00_param_set_optional_utf8_ptr
+#include "param_helpers.h"
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
 #include <openssl/evp.h>
 #endif

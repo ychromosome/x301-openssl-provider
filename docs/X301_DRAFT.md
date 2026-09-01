@@ -13,7 +13,7 @@ only to this project profile.
 | Hybrid TLS construction | [RFC 9954](https://www.rfc-editor.org/rfc/rfc9954.html) | Concatenated component shares and secrets; failure as one group |
 | Registered X25519/ML-KEM instance | [RFC 10024 Sections 4-5](https://www.rfc-editor.org/rfc/rfc10024.html) | ML-KEM-first ordering and role-dependent share layout |
 | ML-KEM-1024 | [FIPS 203](https://doi.org/10.6028/NIST.FIPS.203) | Algorithms, sizes and implicit rejection; implementation is OpenSSL-owned |
-| Provider TLS group and KEM surface | OpenSSL `provider-base(7)`, `provider-keymgmt(7)`, `provider-kem(7)`, `EVP_PKEY_encapsulate(3)` and `EVP_PKEY_decapsulate(3)`; exact evidence lanes 3.5.7 and 4.0.1 | The technically EVP-fetchable adapter that libssl requires |
+| Provider TLS group and KEM surface | OpenSSL `provider-base(7)`, `provider-keymgmt(7)`, `provider-kem(7)`, `EVP_PKEY_encapsulate(3)` and `EVP_PKEY_decapsulate(3)`; exact evidence lanes 3.5.8 and 4.0.2 | The technically EVP-fetchable adapter that libssl requires |
 | ED301 parameters and EdDSA byte contract | `../inputs/round4/ED301-EdDSA-draft.md` and `../inputs/round4/upstream/ed301-v1/ed301-v1.json` | Frozen curve input only; the Ed301-EdDSA contract is unchanged |
 
 RFC 9846 Sections 4.3.7 and 4.3.8 control Supported Groups and Key Share.

@@ -19,16 +19,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc"
-version = "1.2.66"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5d6cac793997bd970000024b2934968efe83b382de4fdcf4fcb46b6ee4ad996"
-dependencies = [
- "find-msvc-tools",
- "shlex",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -101,33 +91,9 @@ name = "ed301-eddsa"
 version = "0.1.0"
 dependencies = [
  "crypto-bigint",
- "ed301-valgrind-client",
  "shake",
  "zeroize",
 ]
-
-[[package]]
-name = "ed301-eddsa-provider"
-version = "0.1.0"
-dependencies = [
- "cc",
- "crypto-bigint",
- "ed301-eddsa",
- "zeroize",
-]
-
-[[package]]
-name = "ed301-valgrind-client"
-version = "0.1.0"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "find-msvc-tools"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
 
 [[package]]
 name = "hybrid-array"
@@ -173,12 +139,6 @@ dependencies = [
  "keccak",
  "sponge-cursor",
 ]
-
-[[package]]
-name = "shlex"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sponge-cursor"

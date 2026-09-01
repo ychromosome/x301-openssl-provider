@@ -7,7 +7,7 @@ umask 077
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 if (( $# < 7 || $# > 8 )); then
-    printf 'usage: %s <3.5.7|4.0.1> <sealed-lane-root> <lane-evidence-sha256> <provider-modules> <source-manifest> <cpu> <fresh-output-dir> [repetitions]\n' "$0" >&2
+    printf 'usage: %s <3.5.8|4.0.2> <sealed-lane-root> <lane-evidence-sha256> <provider-modules> <source-manifest> <cpu> <fresh-output-dir> [repetitions]\n' "$0" >&2
     exit 2
 fi
 
@@ -20,7 +20,7 @@ CPU=$6
 OUTPUT=$7
 REPETITIONS=${8:-5}
 case "$LANE" in
-    3.5.7|4.0.1) ;;
+    3.5.8|4.0.2) ;;
     *) printf 'unsupported OpenSSL lane: %s\n' "$LANE" >&2; exit 2 ;;
 esac
 case "$CPU:$REPETITIONS" in
@@ -181,12 +181,6 @@ run_case() {
         kex:X301) bytes=38; properties=provider=x301; module_arg=$MODULES ;;
         kem:X301MLKEM1024) properties=provider=x301; module_arg=$MODULES ;;
         signature:ED25519|signature:ED448) binary=$SBENCH ;;
-        signature:Ed301-EdDSA-draft-00)
-            binary=$SBENCH
-            properties=provider=ed301_eddsa_draft00
-            module_arg=$MODULES
-            provider=ed301_eddsa_draft00
-            ;;
     esac
     tag=$(printf '%s-%s-%s-%s' "$category" "$operation" "$algorithm" "$run" \
         | tr -c 'A-Za-z0-9._-' '_')
@@ -212,11 +206,11 @@ for ((run = 1; run <= REPETITIONS; run++)); do
     if (( run % 2 == 1 )); then
         kexes=(X25519 X448 X301)
         kems=(ML-KEM-1024 X25519MLKEM768 X448MLKEM1024 X301MLKEM1024)
-        signatures=(ED25519 ED448 Ed301-EdDSA-draft-00)
+        signatures=(ED25519 ED448)
     else
         kexes=(X301 X448 X25519)
         kems=(X301MLKEM1024 X448MLKEM1024 X25519MLKEM768 ML-KEM-1024)
-        signatures=(Ed301-EdDSA-draft-00 ED448 ED25519)
+        signatures=(ED448 ED25519)
     fi
     for algorithm in "${kexes[@]}"; do
         run_case kex keygen "$algorithm" "$run" 1500

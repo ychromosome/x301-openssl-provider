@@ -4,7 +4,7 @@
 # Contract sources: RFC 9846 Sections 4.3.7-4.3.8 and 4.6.1 (TLS 1.3
 # NamedGroup, fresh KeyShare, and session tickets), RFC 9954 (hybrid design),
 # RFC 10024 Sections 4-5 (ML-KEM-first key-share construction), FIPS 203
-# (ML-KEM-1024), and the OpenSSL 3.5.7/4.0.1 s_client/s_server contracts.
+# (ML-KEM-1024), and the OpenSSL 3.5.8/4.0.2 s_client/s_server contracts.
 
 set -Eeuo pipefail
 
@@ -41,7 +41,7 @@ PROXY_LOG=
 PUBLIC_ALIAS_MASK=
 
 if test "$#" -ne 4; then
-    printf 'usage: %s <3.5.7-lane-root> <3.5.7-evidence-sha256> <4.0.1-lane-root> <4.0.1-evidence-sha256>\n' \
+    printf 'usage: %s <3.5.8-lane-root> <3.5.8-evidence-sha256> <4.0.2-lane-root> <4.0.2-evidence-sha256>\n' \
         "$0" >&2
     exit 2
 fi
@@ -64,27 +64,27 @@ fi
 RESULT_ROOT=$(readlink -f -- "$RESULT_ROOT")
 mkdir -m 700 -- "$RESULT_ROOT/openssl-lanes"
 sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
-    "$LANE_357_ROOT" 3.5.7 "$LANE_357_EVIDENCE" \
-    "$RESULT_ROOT/openssl-lanes/3.5.7"
+    "$LANE_357_ROOT" 3.5.8 "$LANE_357_EVIDENCE" \
+    "$RESULT_ROOT/openssl-lanes/3.5.8"
 sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
-    "$LANE_401_ROOT" 4.0.1 "$LANE_401_EVIDENCE" \
-    "$RESULT_ROOT/openssl-lanes/4.0.1"
-LANE_357_ROOT=$RESULT_ROOT/openssl-lanes/3.5.7
-LANE_401_ROOT=$RESULT_ROOT/openssl-lanes/4.0.1
+    "$LANE_401_ROOT" 4.0.2 "$LANE_401_EVIDENCE" \
+    "$RESULT_ROOT/openssl-lanes/4.0.2"
+LANE_357_ROOT=$RESULT_ROOT/openssl-lanes/3.5.8
+LANE_401_ROOT=$RESULT_ROOT/openssl-lanes/4.0.2
 
 record_run_identity() {
     mkdir -m 700 -- "$RESULT_ROOT/inputs"
-    cp -- "$LANE_357_ROOT/logs/3.5.7/evidence_manifest.sha256" \
-        "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256"
-    cp -- "$LANE_401_ROOT/logs/4.0.1/evidence_manifest.sha256" \
-        "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256"
+    cp -- "$LANE_357_ROOT/logs/3.5.8/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-3.5.8-evidence-manifest.sha256"
+    cp -- "$LANE_401_ROOT/logs/4.0.2/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-4.0.2-evidence-manifest.sha256"
     cp -- "$LANE_357_ROOT/PRIVATE_LANE_SHA256SUMS" \
-        "$RESULT_ROOT/inputs/openssl-3.5.7-private-lane.sha256"
+        "$RESULT_ROOT/inputs/openssl-3.5.8-private-lane.sha256"
     cp -- "$LANE_401_ROOT/PRIVATE_LANE_SHA256SUMS" \
-        "$RESULT_ROOT/inputs/openssl-4.0.1-private-lane.sha256"
-    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256" | awk '{print $1}')" \
+        "$RESULT_ROOT/inputs/openssl-4.0.2-private-lane.sha256"
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.8-evidence-manifest.sha256" | awk '{print $1}')" \
         = "$LANE_357_EVIDENCE"
-    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256" | awk '{print $1}')" \
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.2-evidence-manifest.sha256" | awk '{print $1}')" \
         = "$LANE_401_EVIDENCE"
     (
         cd "$ROOT"
@@ -114,9 +114,9 @@ record_run_identity() {
     } >"$RESULT_ROOT/TOOLCHAIN.txt" 2>&1
     {
         printf 'lane\tevidence_manifest\texternal_evidence_sha256\n'
-        printf '3.5.7\tinputs/openssl-3.5.7-evidence-manifest.sha256\t%s\n' \
+        printf '3.5.8\tinputs/openssl-3.5.8-evidence-manifest.sha256\t%s\n' \
             "$LANE_357_EVIDENCE"
-        printf '4.0.1\tinputs/openssl-4.0.1-evidence-manifest.sha256\t%s\n' \
+        printf '4.0.2\tinputs/openssl-4.0.2-evidence-manifest.sha256\t%s\n' \
             "$LANE_401_EVIDENCE"
     } >"$RESULT_ROOT/RUN_INPUTS.tsv"
 }
@@ -853,16 +853,16 @@ run_lane() {
 }
 
 record_run_identity
-run_lane 3.5.7 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
-run_lane 4.0.1 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
-run_cross_lane 3.5.7 "$LANE_357_ROOT" 4.0.1 "$LANE_401_ROOT" \
+run_lane 3.5.8 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
+run_lane 4.0.2 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
+run_cross_lane 3.5.8 "$LANE_357_ROOT" 4.0.2 "$LANE_401_ROOT" \
     cross-357-client-401-server
-run_cross_lane 4.0.1 "$LANE_401_ROOT" 3.5.7 "$LANE_357_ROOT" \
+run_cross_lane 4.0.2 "$LANE_401_ROOT" 3.5.8 "$LANE_357_ROOT" \
     cross-401-client-357-server
 sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
-    "$LANE_357_ROOT" 3.5.7 "$LANE_357_EVIDENCE"
+    "$LANE_357_ROOT" 3.5.8 "$LANE_357_EVIDENCE"
 sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
-    "$LANE_401_ROOT" 4.0.1 "$LANE_401_EVIDENCE"
+    "$LANE_401_ROOT" 4.0.2 "$LANE_401_EVIDENCE"
 for lane_root in "$LANE_357_ROOT" "$LANE_401_ROOT"; do
     (cd "$lane_root" && \
         sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS.seal && \

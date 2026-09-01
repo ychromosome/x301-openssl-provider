@@ -7,14 +7,14 @@ or release operation. The only accepted lanes are:
 
 | lane | release name | public source URL | shared-library major |
 |---|---|---|---|
-| 3.5.7 | openssl-3.5.7 | https://www.openssl.org/source/openssl-3.5.7.tar.gz | 3 |
-| 4.0.1 | openssl-4.0.1 | https://www.openssl.org/source/openssl-4.0.1.tar.gz | 4 |
+| 3.5.8 | openssl-3.5.8 | https://www.openssl.org/source/openssl-3.5.8.tar.gz | 3 |
+| 4.0.2 | openssl-4.0.2 | https://www.openssl.org/source/openssl-4.0.2.tar.gz | 4 |
 
 The builder also pins the full SHA-256 digest of each accepted release
-tarball: `a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8`
-for 3.5.7 and
-`2db3f3a0d6ea4b59e1f094ace2c8cd536dffb87cdc39084c5afa1e6f7f37dd09`
-for 4.0.1. Both the sidecar value and the tarball bytes must match the
+tarball: `a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2`
+for 3.5.8 and
+`736b467530f916737b7031310ccb21d8218c6229e61e8e160cd1d3458cd543a8`
+for 4.0.2. Both the sidecar value and the tarball bytes must match the
 corresponding pinned value.
 
 The URL is provenance metadata only. The helper does not fetch it; the
@@ -104,26 +104,11 @@ not falsely call the entire post-build directory pristine.
 
 ## Provider-module and sanitizer boundary
 
-The OpenSSL lane helper does not build the Ed301 provider module and does not
-claim to sanitize OpenSSL or the provider. The acceptance runner records
-ordinary, failpoint, optional PKI, private-use TLS and full TLS-collider
-provider-module hashes before any module or harness execution and again after
-the targeted execution gates. Every executable harness and generated input is
-covered by the same pre/post boundary. Those hashes are separate from
-`openssl_modules_post.sha256`, which covers only OpenSSL's installed module
-directory.
+The OpenSSL lane helper builds no project provider. The X301 acceptance runner
+separately records ordinary, failpoint, sanitizer and fuzz-coverage module
+hashes before and after use. ASan/UBSan covers the C provider and hybrid
+boundaries; Valgrind covers the linked Rust/FFI paths. Neither lane sanitizes
+the OpenSSL shared libraries or establishes a general memory-safety claim.
 
-The runner's ASan/UBSan gate is targeted to
-`provider_signature`, `provider_keymgmt`, `provider_serialization`,
-`val01_decoder_bio`, `provider_load`, `provider_rand`, and `provider_tls`, with a separate
-`provider_hardening` Rust-allocation-only run. Valgrind is targeted to
-`provider_signature`, `provider_serialization`, `val01_decoder_bio`,
-`provider_load`, `provider_rand`, and the same `provider_hardening`
-Rust-allocation-only run;
-the GCC analyzer is targeted to `c/provider_shim.c`. These scopes are written
-as evidence and reported as targeted checks. They do not instrument the
-OpenSSL shared libraries, every harness, every provider entry path, or the
-whole matrix, and they do not establish a general memory-safety claim.
-
-No lane result should be promoted beyond public OpenSSL 3.5.7/4.0.1 tarball,
+No lane result should be promoted beyond public OpenSSL 3.5.8/4.0.2 tarball,
 build, and runtime identity verified under this evidence contract.

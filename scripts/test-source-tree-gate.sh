@@ -232,7 +232,7 @@ check_cargo_source_path 'unicode-😀'
 
 for gate in scripts/check.sh scripts/check-downstream.sh \
         scripts/check-secret-taint.sh scripts/check-x301-long.sh \
-        scripts/run-x301-fuzz.sh scripts/test-provider.sh; do
+        scripts/run-x301-fuzz.sh; do
     grep -F 'scripts/write-cargo-config.py' "$ROOT/$gate" >/dev/null || {
         echo "$gate does not bind Cargo to the verified vendor directory" >&2
         exit 1
@@ -259,11 +259,11 @@ grep -Fqx '          toolchain: 1.98.0' \
     exit 1
 }
 checkout_line=$(grep -n 'actions/checkout@' "$ROOT/.github/workflows/ci.yml" \
-    | cut -d: -f1)
+    | head -n 1 | cut -d: -f1)
 verify_line=$(grep -n 'Verify checked-out source identity' \
-    "$ROOT/.github/workflows/ci.yml" | cut -d: -f1)
+    "$ROOT/.github/workflows/ci.yml" | head -n 1 | cut -d: -f1)
 toolchain_line=$(grep -n 'dtolnay/rust-toolchain@' \
-    "$ROOT/.github/workflows/ci.yml" | cut -d: -f1)
+    "$ROOT/.github/workflows/ci.yml" | head -n 1 | cut -d: -f1)
 test "$checkout_line" -lt "$verify_line"
 test "$verify_line" -lt "$toolchain_line"
 

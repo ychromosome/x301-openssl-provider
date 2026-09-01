@@ -9,7 +9,7 @@ Recheck every row after a stable-Rust or provider-contract change.
 
 ## X301 provider additions
 
-Date: 2026-08-25. Sources: OpenSSL 3.5.7/4.0.1 provider contracts, FIPS 203,
+Date: 2026-08-25. Sources: OpenSSL 3.5.8/4.0.2 provider contracts, FIPS 203,
 RFC 9846, and RFC 10024.
 
 | Area | Required implementation | Why it exists | Replacement or deletion trigger | Required permanent evidence |

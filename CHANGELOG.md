@@ -13,8 +13,9 @@
   generic basepoint ladder remains a differential test reference.
 - Removed automatic prepared-peer acceleration. Every derive uses the same
   Montgomery ladder.
-- Added independent Python vectors, dual OpenSSL 3.5.7/4.0.1 provider and TLS
+- Added independent Python vectors, dual OpenSSL 3.5.8/4.0.2 provider and TLS
   matrices, persisted fuzz targets, secret-taint tests, and final-binary
   codegen gates.
-- Ed301-EdDSA uses OID `1.3.6.1.4.1.66282.301.3`. The retired
-  Ed301-Sig-v1 identity remains `.301.1`; X301 remains `.301.2`.
+- Removed the bundled Ed301-EdDSA-draft-00 provider. Its `.301.3` OID remains
+  frozen; the canonical Ed301-EdDSA-v1 provider uses `.301.4` in its own
+  repository. X301 remains `.301.2`.

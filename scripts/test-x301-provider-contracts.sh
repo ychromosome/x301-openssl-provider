@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dual-lane X301 H5/T6/T7/T9/T10 provider contract runner.
+# Dual-lane X301 T6/T7/T9/T10 provider contract runner.
 
 set -Eeuo pipefail
 
@@ -14,7 +14,7 @@ RUST_BIN=$(dirname -- "$CARGO")
 umask 077
 
 if test "$#" -ne 4; then
-    printf 'usage: %s <3.5.7-lane-root> <3.5.7-evidence-sha256> <4.0.1-lane-root> <4.0.1-evidence-sha256>\n' \
+    printf 'usage: %s <3.5.8-lane-root> <3.5.8-evidence-sha256> <4.0.2-lane-root> <4.0.2-evidence-sha256>\n' \
         "$0" >&2
     exit 2
 fi
@@ -37,27 +37,27 @@ fi
 RESULT_ROOT=$(readlink -f -- "$RESULT_ROOT")
 mkdir -m 700 -- "$RESULT_ROOT/openssl-lanes"
 sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
-    "$LANE_357_ROOT" 3.5.7 "$LANE_357_EVIDENCE" \
-    "$RESULT_ROOT/openssl-lanes/3.5.7"
+    "$LANE_357_ROOT" 3.5.8 "$LANE_357_EVIDENCE" \
+    "$RESULT_ROOT/openssl-lanes/3.5.8"
 sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
-    "$LANE_401_ROOT" 4.0.1 "$LANE_401_EVIDENCE" \
-    "$RESULT_ROOT/openssl-lanes/4.0.1"
-LANE_357_ROOT=$RESULT_ROOT/openssl-lanes/3.5.7
-LANE_401_ROOT=$RESULT_ROOT/openssl-lanes/4.0.1
+    "$LANE_401_ROOT" 4.0.2 "$LANE_401_EVIDENCE" \
+    "$RESULT_ROOT/openssl-lanes/4.0.2"
+LANE_357_ROOT=$RESULT_ROOT/openssl-lanes/3.5.8
+LANE_401_ROOT=$RESULT_ROOT/openssl-lanes/4.0.2
 
 record_run_identity() {
     mkdir -m 700 -- "$RESULT_ROOT/inputs"
-    cp -- "$LANE_357_ROOT/logs/3.5.7/evidence_manifest.sha256" \
-        "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256"
-    cp -- "$LANE_401_ROOT/logs/4.0.1/evidence_manifest.sha256" \
-        "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256"
+    cp -- "$LANE_357_ROOT/logs/3.5.8/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-3.5.8-evidence-manifest.sha256"
+    cp -- "$LANE_401_ROOT/logs/4.0.2/evidence_manifest.sha256" \
+        "$RESULT_ROOT/inputs/openssl-4.0.2-evidence-manifest.sha256"
     cp -- "$LANE_357_ROOT/PRIVATE_LANE_SHA256SUMS" \
-        "$RESULT_ROOT/inputs/openssl-3.5.7-private-lane.sha256"
+        "$RESULT_ROOT/inputs/openssl-3.5.8-private-lane.sha256"
     cp -- "$LANE_401_ROOT/PRIVATE_LANE_SHA256SUMS" \
-        "$RESULT_ROOT/inputs/openssl-4.0.1-private-lane.sha256"
-    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.7-evidence-manifest.sha256" | awk '{print $1}')" \
+        "$RESULT_ROOT/inputs/openssl-4.0.2-private-lane.sha256"
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.8-evidence-manifest.sha256" | awk '{print $1}')" \
         = "$LANE_357_EVIDENCE"
-    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.1-evidence-manifest.sha256" | awk '{print $1}')" \
+    test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.2-evidence-manifest.sha256" | awk '{print $1}')" \
         = "$LANE_401_EVIDENCE"
     (
         cd "$ROOT"
@@ -89,9 +89,9 @@ record_run_identity() {
     } >"$RESULT_ROOT/TOOLCHAIN.txt" 2>&1
     {
         printf 'lane\tevidence_manifest\texternal_evidence_sha256\n'
-        printf '3.5.7\tinputs/openssl-3.5.7-evidence-manifest.sha256\t%s\n' \
+        printf '3.5.8\tinputs/openssl-3.5.8-evidence-manifest.sha256\t%s\n' \
             "$LANE_357_EVIDENCE"
-        printf '4.0.1\tinputs/openssl-4.0.1-evidence-manifest.sha256\t%s\n' \
+        printf '4.0.2\tinputs/openssl-4.0.2-evidence-manifest.sha256\t%s\n' \
             "$LANE_401_EVIDENCE"
     } >"$RESULT_ROOT/RUN_INPUTS.tsv"
     {
@@ -164,26 +164,6 @@ run_lane() {
                 -p x301-provider --features tls-x301-mlkem1024
     )
     cp "$target/release/libx301.so" "$modules/x301.so"
-
-    # H5 uses the ordinary signature-only Ed301 module solely to prove that
-    # OpenSSL never accepts either algorithm's EVP_PKEY in the other's
-    # operation context.  No PKI/TLS/test-only Ed301 feature is enabled.
-    (
-        cd "$ROOT/provider"
-        env -i PATH="$RUST_BIN:/usr/bin:/bin" HOME="$build" LC_ALL=C \
-            CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
-            CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 \
-            RUSTC="$RUSTC" \
-            CC=/usr/bin/gcc AR=/usr/bin/ar \
-            ED301_HERMETIC_PROVIDER_BUILD=1 \
-            OPENSSL_INCLUDE_DIR="$prefix/include" \
-            OPENSSL_LIB_DIR="$prefix/lib" \
-            LD_LIBRARY_PATH="$prefix/lib" \
-            "$CARGO" build --release --locked --offline \
-                -p ed301-eddsa-provider
-    )
-    cp "$target/release/libed301_eddsa_draft00.so" \
-        "$modules/ed301_eddsa_draft00.so"
 
     # M6 uses a separately copied, test-only Rust failpoint artifact.  The
     # ordinary module must remain byte-free of the environment-hook names.
@@ -286,11 +266,6 @@ run_lane() {
         "$ROOT/provider-tests/x301/provider_x301_hybrid_contract.c" \
         -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
         -o "$build/bin/provider_x301_hybrid_contract"
-    /usr/bin/gcc -std=c11 -Wall -Wextra -Werror \
-        -I"$prefix/include" \
-        "$ROOT/provider-tests/x301/provider_x301_key_separation.c" \
-        -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
-        -o "$build/bin/provider_x301_key_separation"
     /usr/bin/gcc -std=c11 -Wall -Wextra -Werror -pthread \
         -I"$prefix/include" \
         "$ROOT/provider-tests/x301/provider_x301_nested_properties.c" \
@@ -321,13 +296,11 @@ run_lane() {
             modules-failpoint/x301.so \
             modules-sanitizer/x301.so \
             modules-fuzz-coverage/x301.so \
-            modules/ed301_eddsa_draft00.so \
             bin/provider_x301_contract \
             bin/provider_x301_hybrid_contract \
             bin/provider_x301_contract_sanitizer \
             bin/provider_x301_hybrid_contract_sanitizer \
             bin/provider_x301_fuzz \
-            bin/provider_x301_key_separation \
             bin/provider_x301_nested_properties >PREUSE_SHA256SUMS
         sha256sum --strict --quiet -c PREUSE_SHA256SUMS
     )
@@ -347,10 +320,6 @@ run_lane() {
         OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
         "$build/bin/provider_x301_hybrid_contract" "$modules" \
         2>&1 | tee "$build/provider_x301_hybrid_contract.log"
-    env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
-        OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
-        "$build/bin/provider_x301_key_separation" "$modules" \
-        2>&1 | tee "$build/provider_x301_key_separation.log"
     env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
         OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
         "$build/bin/provider_x301_nested_properties" "$modules" \
@@ -458,13 +427,11 @@ run_lane() {
             modules-failpoint/x301.so \
             modules-sanitizer/x301.so \
             modules-fuzz-coverage/x301.so \
-            modules/ed301_eddsa_draft00.so \
             bin/provider_x301_contract \
             bin/provider_x301_hybrid_contract \
             bin/provider_x301_contract_sanitizer \
             bin/provider_x301_hybrid_contract_sanitizer \
             bin/provider_x301_fuzz \
-            bin/provider_x301_key_separation \
             bin/provider_x301_nested_properties \
             PREUSE_SHA256SUMS \
             provider_x301_contract-valgrind.log \
@@ -477,18 +444,18 @@ run_lane() {
             inputs/openssl-evp-x301.cnf >SHA256SUMS
         sha256sum --strict --quiet -c SHA256SUMS
     )
-    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS nested_properties=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS h04_libfuzzer=PASS\n' \
+    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS t6=PASS t7=PASS t9=PASS t10=PASS nested_properties=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS h04_libfuzzer=PASS\n' \
         "$lane" "$lane_evidence" \
         | tee "$build/STATUS.txt"
 }
 
 record_run_identity
-run_lane 3.5.7 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
-run_lane 4.0.1 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
+run_lane 3.5.8 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
+run_lane 4.0.2 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
 sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
-    "$LANE_357_ROOT" 3.5.7 "$LANE_357_EVIDENCE"
+    "$LANE_357_ROOT" 3.5.8 "$LANE_357_EVIDENCE"
 sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
-    "$LANE_401_ROOT" 4.0.1 "$LANE_401_EVIDENCE"
+    "$LANE_401_ROOT" 4.0.2 "$LANE_401_EVIDENCE"
 for lane_root in "$LANE_357_ROOT" "$LANE_401_ROOT"; do
     (cd "$lane_root" && \
         sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS.seal && \

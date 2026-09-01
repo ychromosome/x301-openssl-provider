@@ -83,7 +83,7 @@ fn reject_native_injection_environment() {
 fn main() {
     println!("cargo:rerun-if-changed=c/provider_shim.c");
     println!("cargo:rerun-if-changed=c/hybrid_kem.c");
-    println!("cargo:rerun-if-changed=../ed301-eddsa-provider/c/param_helpers.h");
+    println!("cargo:rerun-if-changed=c/param_helpers.h");
     println!("cargo:rerun-if-changed=c/provider_internal.h");
     for name in [
         "X301_HERMETIC_PROVIDER_BUILD",

@@ -2,7 +2,6 @@
 
 This repository contains experimental implementations of:
 
-- Ed301-EdDSA `KEYMGMT` and `SIGNATURE`;
 - X301 `KEYMGMT` and `KEYEXCH`; and
 - the private-use TLS 1.3 group `X301MLKEM1024`.
 
@@ -18,7 +17,9 @@ public inputs clear bits 301-303 and reduce once modulo
 Derivation rejects an all-zero result.
 
 Ed301 and X301 use separate key types and keys. X301 reuses the safe-Rust
-Ed301 5x64 field backend. Every derive uses the same Montgomery ladder.
+5x64 field backend derived from the Ed301 curve work, but this repository
+builds no Ed301 signature provider. Every derive uses the same Montgomery
+ladder.
 
 X301MLKEM1024 fetches `ML-KEM-1024` through EVP in the provider child library
 context. This repository contains no ML-KEM implementation or hybrid KDF.
@@ -37,12 +38,11 @@ OpenSSL deviations are in `docs/X301_CONSTRUCTION_REGISTER.md` and
 
 | Build | Module | Operations |
 | --- | --- | --- |
-| Ed301 | `ed301_eddsa_draft00.so` | `KEYMGMT`, `SIGNATURE` |
 | X301 raw | `x301-raw.so` | `KEYMGMT`, `KEYEXCH` |
 | X301 hybrid | `x301.so` | X301 plus `X301MLKEM1024` |
 
 Modules accept the OpenSSL ABI major used at build time: 3 or 4. The tested
-reference lanes are 3.5.7 and 4.0.1.
+reference lanes are 3.5.8 and 4.0.2.
 
 ## Verification
 
@@ -62,12 +62,12 @@ Provider and TLS matrices:
 ```sh
 scripts/run-authoritative-gate.sh archive <trusted-sha256> \
   test-x301-provider-contracts \
-    /trusted/openssl-3.5.7-lane <3.5.7-evidence-sha256> \
-    /trusted/openssl-4.0.1-lane <4.0.1-evidence-sha256>
+    /trusted/openssl-3.5.8-lane <3.5.8-evidence-sha256> \
+    /trusted/openssl-4.0.2-lane <4.0.2-evidence-sha256>
 
 scripts/run-authoritative-gate.sh archive <trusted-sha256> test-x301-tls \
-    /trusted/openssl-3.5.7-lane <3.5.7-evidence-sha256> \
-    /trusted/openssl-4.0.1-lane <4.0.1-evidence-sha256>
+    /trusted/openssl-3.5.8-lane <3.5.8-evidence-sha256> \
+    /trusted/openssl-4.0.2-lane <4.0.2-evidence-sha256>
 ```
 
 `scripts/check-x301-long.sh` runs the million-iteration vector.

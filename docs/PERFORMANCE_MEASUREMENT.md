@@ -52,7 +52,7 @@ ED301_LANE_EVIDENCE_MANIFEST=/path/lane/EVIDENCE_MANIFEST.sha256
 scripts/run-x301-benchmark-session.sh derive-first /path/openssl-prefix \
     /path/baseline-modules /path/candidate-modules 2 /tmp/x301-derive-session
 
-scripts/run-x301-comparative-benchmark.sh 3.5.7 /path/sealed-lane \
+scripts/run-x301-comparative-benchmark.sh 3.5.8 /path/sealed-lane \
     <lane-evidence-sha256> /path/provider-modules SOURCE_MANIFEST.sha256 \
     2 /tmp/x301-comparative
 ```

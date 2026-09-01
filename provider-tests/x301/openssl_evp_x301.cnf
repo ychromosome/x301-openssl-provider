@@ -15,7 +15,6 @@ oid_section = project_oids
 [providers]
 default = default_provider
 x301 = x301_provider
-ed301 = ed301_provider
 
 [default_provider]
 activate = 1
@@ -24,10 +23,5 @@ activate = 1
 module = x301.so
 activate = 1
 
-[ed301_provider]
-module = ed301_eddsa_draft00.so
-activate = 1
-
 [project_oids]
 X301 = 1.3.6.1.4.1.66282.301.2
-Ed301-EdDSA-draft-00 = 1.3.6.1.4.1.66282.301.3
