@@ -291,6 +291,11 @@ run_lane() {
         "$ROOT/provider-tests/x301/provider_x301_key_separation.c" \
         -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
         -o "$build/bin/provider_x301_key_separation"
+    /usr/bin/gcc -std=c11 -Wall -Wextra -Werror -pthread \
+        -I"$prefix/include" \
+        "$ROOT/provider-tests/x301/provider_x301_nested_properties.c" \
+        -L"$prefix/lib" -Wl,-rpath,"$prefix/lib" -lcrypto \
+        -o "$build/bin/provider_x301_nested_properties"
     for harness in provider_x301_contract provider_x301_hybrid_contract; do
         /usr/bin/gcc -std=c11 -Wall -Wextra -Werror -pthread \
             -fsanitize=address,undefined -fno-sanitize-recover=all \
@@ -322,7 +327,8 @@ run_lane() {
             bin/provider_x301_contract_sanitizer \
             bin/provider_x301_hybrid_contract_sanitizer \
             bin/provider_x301_fuzz \
-            bin/provider_x301_key_separation >PREUSE_SHA256SUMS
+            bin/provider_x301_key_separation \
+            bin/provider_x301_nested_properties >PREUSE_SHA256SUMS
         sha256sum --strict --quiet -c PREUSE_SHA256SUMS
     )
 
@@ -345,6 +351,10 @@ run_lane() {
         OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
         "$build/bin/provider_x301_key_separation" "$modules" \
         2>&1 | tee "$build/provider_x301_key_separation.log"
+    env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
+        "$build/bin/provider_x301_nested_properties" "$modules" \
+        2>&1 | tee "$build/provider_x301_nested_properties.log"
 
     # M5/T13 lifecycle memory lane.  In particular, the raw KEYEXCH harness
     # executes four concurrent workers sharing the same immutable EVP_PKEYs;
@@ -360,6 +370,14 @@ run_lane() {
                 "$build/bin/$harness" "$modules" \
                 >"$build/$harness-valgrind.log" 2>&1
     done
+    env -i PATH=/usr/bin:/bin LC_ALL=C OPENSSL_CONF=/dev/null \
+        OPENSSL_MODULES="$modules" LD_LIBRARY_PATH="$prefix/lib" \
+        /usr/bin/valgrind --tool=memcheck --vgdb=no \
+            --error-exitcode=99 --track-origins=yes \
+            --undef-value-errors=yes --leak-check=full \
+            --errors-for-leak-kinds=definite,indirect,possible --quiet \
+            "$build/bin/provider_x301_nested_properties" "$modules" \
+            >"$build/provider_x301_nested_properties-valgrind.log" 2>&1
 
     # F1-F3: all three provider-entry targets use the frozen W corpus first,
     # followed by the complete, explicitly bounded structured sweep.
@@ -447,9 +465,11 @@ run_lane() {
             bin/provider_x301_hybrid_contract_sanitizer \
             bin/provider_x301_fuzz \
             bin/provider_x301_key_separation \
+            bin/provider_x301_nested_properties \
             PREUSE_SHA256SUMS \
             provider_x301_contract-valgrind.log \
             provider_x301_hybrid_contract-valgrind.log \
+            provider_x301_nested_properties-valgrind.log \
             h04-provider-libfuzzer.log \
             provider-fuzz-corpus.sha256 \
             inputs/openssl-evp-pkey.txt \
@@ -457,7 +477,7 @@ run_lane() {
             inputs/openssl-evp-x301.cnf >SHA256SUMS
         sha256sum --strict --quiet -c SHA256SUMS
     )
-    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS h04_libfuzzer=PASS\n' \
+    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS h5=PASS t6=PASS t7=PASS t9=PASS t10=PASS nested_properties=PASS m1_m6=PASS m5_valgrind=PASS f1_f4=PASS h04_libfuzzer=PASS\n' \
         "$lane" "$lane_evidence" \
         | tee "$build/STATUS.txt"
 }
