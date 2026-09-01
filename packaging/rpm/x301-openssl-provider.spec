@@ -9,17 +9,14 @@
 
 Name:           x301-openssl-provider
 Version:        0.1.0
-Release:        0.3.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.4.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental X301 key-exchange provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/x301-openssl-provider
 Source0:        %{url}/archive/%{commit}/x301-openssl-provider-%{commit}.tar.gz
 Source1:        x301-provider.conf
 Source2:        opensslcnf-x301.config
-Source3:        x301-crypto-policy
-Source4:        ssl-ctx-policy-probe.c
-Source5:        README.crypto-policy
-Source6:        x301-crypto-policy.8
+Source3:        README.crypto-policy
 Patch0:         0001-Build-X301-shim-with-RPM-native-flags.patch
 
 BuildRequires:  cargo-rpm-macros
@@ -33,20 +30,23 @@ BuildRequires:  openssl
 %endif
 
 Requires:       openssl-libs%{?_isa} >= 1:3.5.7
-Requires:       bash
-Requires:       coreutils
-Requires:       crypto-policies-scripts
-Requires:       gawk
-Requires:       util-linux
-Requires(posttrans): crypto-policies-scripts
-Requires(postun): crypto-policies-scripts
 
 %description
 X301 is an experimental key-exchange algorithm. The provider also exposes the
 private-use X301MLKEM1024 TLS 1.3 hybrid group and delegates ML-KEM-1024 to
-OpenSSL. Installing this package activates the provider system-wide and places
-X301MLKEM1024 and X301 ahead of the selected crypto-policy TLS group list.
-X301 is not standardized or FIPS validated.
+OpenSSL. Installing this package activates the provider system-wide but does
+not change the system TLS group preference. X301 is not standardized or FIPS
+validated.
+
+%package policy
+Summary:        Explicit OpenSSL policy overlay template for X301 groups
+Requires:       %{name}%{?_isa} = %{version}-%{release}
+
+%description policy
+This optional package installs an inactive OpenSSL crypto-policy overlay
+template for explicitly enabling X301MLKEM1024 and X301 system-wide. Fedora
+crypto-policies cannot express unregistered provider group names in a normal
+subpolicy. Installing this subpackage does not change the active policy.
 
 %prep
 %setup -q -n x301-openssl-provider-%{commit}
@@ -54,16 +54,13 @@ test "$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')" = \
     %{source_manifest_sha256}
 sha256sum --strict --quiet -c SOURCE_MANIFEST.sha256
 %autopatch -p1
-install -pm 0644 %{SOURCE5} README.crypto-policy
+install -pm 0644 %{SOURCE3} README.crypto-policy
 pushd provider
 %cargo_prep -v ../vendor
 popd
 
 %build
 %set_build_flags
-%{__cc} %{build_cflags} -std=c11 -Wall -Wextra -Werror \
-    -o x301-openssl-policy-probe %{SOURCE4} \
-    %{build_ldflags} $(pkg-config --cflags --libs openssl)
 pushd provider
 export CC=/usr/bin/gcc
 export AR=/usr/bin/ar
@@ -88,15 +85,10 @@ popd
 install -Dpm 0755 \
     provider/target/rpm/libx301.so \
     %{buildroot}%{provider_modulesdir}/x301.so
-install -Dpm 0755 %{SOURCE3} %{buildroot}%{_sbindir}/x301-crypto-policy
-install -Dpm 0755 x301-openssl-policy-probe \
-    %{buildroot}%{_libexecdir}/x301-openssl-policy-probe
-install -Dpm 0644 %{SOURCE6} \
-    %{buildroot}%{_mandir}/man8/x301-crypto-policy.8
 install -Dpm 0644 %{SOURCE1} \
     %{buildroot}%{_sysconfdir}/pki/tls/openssl.d/x301-provider.conf
 install -Dpm 0644 %{SOURCE2} \
-    %{buildroot}%{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config
+    %{buildroot}%{_datadir}/%{name}/opensslcnf-x301.config
 
 %check
 %if %{with tests}
@@ -155,34 +147,24 @@ openssl list -provider-path %{buildroot}%{provider_modulesdir} \
 %license provider/cargo-vendor.txt
 %doc README.md
 %doc THIRD_PARTY_NOTICES.md
-%doc README.crypto-policy
 %config(noreplace) %{_sysconfdir}/pki/tls/openssl.d/x301-provider.conf
-%config(noreplace) %{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config
-%{_sbindir}/x301-crypto-policy
-%{_libexecdir}/x301-openssl-policy-probe
-%{_mandir}/man8/x301-crypto-policy.8*
 %{provider_modulesdir}/x301.so
 
-%posttrans
-if %{_sbindir}/x301-crypto-policy reconcile; then
-    echo 'WARNING: X301 and X301MLKEM1024 are experimental, non-standardized and not FIPS validated.'
-    echo 'The provider and TLS groups are active system-wide for newly started OpenSSL applications.'
-    echo 'Use "x301-crypto-policy set POLICY" for later crypto-policy transitions.'
-    echo 'Direct update-crypto-policies changes bypass this safeguard.'
-else
-    echo 'ERROR: X301 crypto-policy state could not be verified.' >&2
-    echo 'Run "x301-crypto-policy reconcile" before restarting OpenSSL consumers.' >&2
-    exit 1
-fi
-exit 0
+%files policy
+%doc README.crypto-policy
+%{_datadir}/%{name}/opensslcnf-x301.config
 
-%postun
-if [ "$1" -eq 0 ] && [ -x %{_bindir}/update-crypto-policies ]; then
-    %{_bindir}/update-crypto-policies >/dev/null 2>&1 || :
-fi
+%posttrans
+echo 'WARNING: X301 and X301MLKEM1024 are experimental, non-standardized and not FIPS validated.'
+echo 'The provider is active; global TLS group preferences are unchanged.'
+echo 'See the optional x301-openssl-provider-policy package for an explicit overlay template.'
 exit 0
 
 %changelog
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.4.20260901gita695bb2
+- Keep the base package out of global TLS group policy
+- Add an inactive, explicit OpenSSL policy-overlay template subpackage
+
 * Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.3.20260901gita695bb2
 - Add the x301-crypto-policy(8) manual page
 
