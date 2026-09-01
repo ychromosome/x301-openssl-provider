@@ -98,6 +98,20 @@ for gate in scripts/check.sh scripts/check-downstream.sh \
     fi
 done
 
+for receipt in 'PATCH=8' 'PATCH=2'; do
+    grep -Fq "grep -qx '$receipt'" \
+        "$ROOT/scripts/build-openssl-provider-lane.sh" || {
+        echo "missing OpenSSL lane receipt: $receipt" >&2
+        exit 1
+    }
+done
+if grep -Eq "grep -qx 'PATCH=(7|1)'" \
+        "$ROOT/scripts/build-openssl-provider-lane.sh";
+then
+    echo 'stale OpenSSL lane patch receipt remains' >&2
+    exit 1
+fi
+
 new_case build-script
 printf '%s\n' 'fn main() { panic!("must not execute"); }' \
     >"$CASE/crates/ed301-eddsa/build.rs"
@@ -283,4 +297,4 @@ then
     exit 1
 fi
 
-printf 'source_tree_gate_regressions=PASS cases=20 cargo_path_cases=7 ci_pins=5\n'
+printf 'source_tree_gate_regressions=PASS cases=21 cargo_path_cases=7 ci_pins=5\n'

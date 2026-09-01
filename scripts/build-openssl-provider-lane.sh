@@ -329,11 +329,11 @@ verify_source_version() {
     3.5.8)
       grep -qx 'MAJOR=3' "$version_file" || return 1
       grep -qx 'MINOR=5' "$version_file" || return 1
-      grep -qx 'PATCH=7' "$version_file" || return 1 ;;
+      grep -qx 'PATCH=8' "$version_file" || return 1 ;;
     4.0.2)
       grep -qx 'MAJOR=4' "$version_file" || return 1
       grep -qx 'MINOR=0' "$version_file" || return 1
-      grep -qx 'PATCH=1' "$version_file" || return 1 ;;
+      grep -qx 'PATCH=2' "$version_file" || return 1 ;;
     *) return 1 ;;
   esac
   grep -qx "SHLIB_VERSION=$SHLIB_MAJOR" "$version_file" || return 1
