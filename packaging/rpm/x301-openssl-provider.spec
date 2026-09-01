@@ -1,15 +1,15 @@
 %bcond_without tests
 
-%global commit a695bb2bbdf027c93c1e5a0f9337e508211b4498
-%global shortcommit a695bb2
+%global commit 3ce8ea457e3769e1e9c56e7aa4d5b780c8e77b0c
+%global shortcommit 3ce8ea4
 %global snapshot 20260901
-%global source_manifest_sha256 2c75423ea3f10fe461eeb0a6563c9474ac1bf290e8038a08d5c0914821951ffb
+%global source_manifest_sha256 8629f7d182d2e7b2e9e62554eb35fd66a1a0aab33c25894a06eac7c43ed2c0e5
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           x301-openssl-provider
 Version:        0.1.0
-Release:        0.4.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.5.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental X301 key-exchange provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/x301-openssl-provider
@@ -161,6 +161,10 @@ echo 'See the optional x301-openssl-provider-policy package for an explicit over
 exit 0
 
 %changelog
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.5.20260901git3ce8ea4
+- Build from the separated X301-only provider workspace
+- Use the core public-key canonicalizer in provider imports
+
 * Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.4.20260901gita695bb2
 - Keep the base package out of global TLS group policy
 - Add an inactive, explicit OpenSSL policy-overlay template subpackage
