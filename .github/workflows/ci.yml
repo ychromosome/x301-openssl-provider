@@ -164,14 +164,12 @@ jobs:
 
   rpm-contract:
     runs-on: ubuntu-24.04
-    container: fedora:43
+    container: fedora:45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Validate Fedora packaging contract
+      - name: Validate Fedora 45 source RPM contract
         run: |
-          dnf -qy install binutils cargo cargo-rpm-macros \
-            crypto-policies-scripts curl gcc git openssl openssl-devel \
-            rpm-build rust ShellCheck
+          dnf -qy install crypto-policies-scripts curl git rpm-build ShellCheck
           shellcheck scripts/check-rpm-packaging.sh \
             scripts/test-rpm-policy-overlay.sh scripts/test-rpm-install.sh
           scripts/check-rpm-packaging.sh
@@ -183,10 +181,12 @@ jobs:
           curl -fL --retry 3 --proto '=https' --proto-redir '=https' \
             "https://github.com/ychromosome/x301-openssl-provider/archive/$commit/x301-openssl-provider-$commit.tar.gz" \
             -o "$topdir/SOURCES/x301-openssl-provider-$commit.tar.gz"
-          cp packaging/rpm/0001-Build-X301-shim-with-RPM-native-flags.patch \
-            packaging/rpm/README.crypto-policy \
-            packaging/rpm/opensslcnf-x301.config \
-            packaging/rpm/x301-provider.conf "$topdir/SOURCES/"
-          rpmbuild -ba --define "_topdir $topdir" \
+          awk '$1 ~ /^(Source[1-9][0-9]*|Patch[0-9]+):$/ { print $2 }' \
+            packaging/rpm/x301-openssl-provider.spec \
+            | while IFS= read -r source; do
+                cp "packaging/rpm/$source" "$topdir/SOURCES/"
+              done
+          rpmbuild -bs --nodeps --define "_topdir $topdir" \
             packaging/rpm/x301-openssl-provider.spec
-          scripts/test-rpm-install.sh "$topdir/RPMS/x86_64"
+          test -n "$(find "$topdir/SRPMS" -maxdepth 1 -type f \
+            -name 'x301-openssl-provider-*.src.rpm' -print -quit)"

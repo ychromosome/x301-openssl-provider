@@ -4,19 +4,24 @@ set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)
 SPEC=$ROOT/packaging/rpm/x301-openssl-provider.spec
 PATCH=$ROOT/packaging/rpm/0001-Build-X301-shim-with-RPM-native-flags.patch
+RPM_DIR=$ROOT/packaging/rpm
 
 command -v rpmspec >/dev/null
 rpmspec -P "$SPEC" >/dev/null
 
 git -C "$ROOT" apply --check --whitespace=error-all "$PATCH"
 
+awk '$1 ~ /^(Source[1-9][0-9]*|Patch[0-9]+):$/ { print $2 }' "$SPEC" \
+    | while IFS= read -r source; do
+        test -f "$RPM_DIR/$source" || {
+            echo "missing local RPM source: $source" >&2
+            exit 1
+        }
+    done
+
 grep -F '%package policy' "$SPEC" >/dev/null
-grep -F '%{_datadir}/%{name}/opensslcnf-x301.config' "$SPEC" >/dev/null
-if grep -F '%{_sysconfdir}/crypto-policies/local.d/' "$SPEC" >/dev/null
-then
-    echo 'base RPM must not install an active crypto-policy overlay' >&2
-    exit 1
-fi
+grep -F '%{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config' \
+    "$SPEC" >/dev/null
 if sed '/^%changelog/,$d' "$SPEC" \
         | grep -E 'x301-crypto-policy|ssl-ctx-policy-probe' >/dev/null
 then
@@ -28,4 +33,4 @@ test ! -e "$ROOT/packaging/rpm/x301-crypto-policy"
 test ! -e "$ROOT/packaging/rpm/ssl-ctx-policy-probe.c"
 test ! -e "$ROOT/packaging/rpm/x301-crypto-policy.8"
 
-printf '%s\n' 'x301_rpm_packaging=PASS provider_auto=1 groups_auto=0'
+printf '%s\n' 'x301_rpm_packaging=PASS provider_auto=1 policy_groups_auto=1'

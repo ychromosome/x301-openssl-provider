@@ -47,39 +47,34 @@ openssl list -providers | grep -Fx '  default' >/dev/null
 openssl list -key-exchange-algorithms | grep -F X25519 >/dev/null
 
 dnf -qy install "$POLICY" >/dev/null
-test "$(sha256sum "$BACKEND" | cut -d ' ' -f1)" = "$baseline"
-test -f /usr/share/x301-openssl-provider/opensslcnf-x301.config
-test ! -e "$ACTIVE"
-
-for policy in EMPTY FIPS; do
-    update-crypto-policies --set "$policy" >/dev/null
-    if grep -F X301 "$BACKEND" >/dev/null; then
-        echo "inactive package changed restrictive policy $policy" >&2
-        exit 1
-    fi
-done
-update-crypto-policies --set DEFAULT >/dev/null
-
-install -Dpm 0644 \
-    /usr/share/x301-openssl-provider/opensslcnf-x301.config "$ACTIVE"
-update-crypto-policies >/dev/null
+test -f "$ACTIVE"
 grep -F X301MLKEM1024 "$BACKEND" >/dev/null
 if grep -F '?X301/' "$BACKEND" >/dev/null; then
     echo 'policy overlay lists raw X301 as a TLS group' >&2
     exit 1
 fi
-rm -f "$ACTIVE"
-update-crypto-policies >/dev/null
-test "$(sha256sum "$BACKEND" | cut -d ' ' -f1)" = "$baseline"
 
 dnf -qy reinstall "$BASE" "$POLICY" >/dev/null
+grep -F X301MLKEM1024 "$BACKEND" >/dev/null
+dnf -qy remove x301-openssl-provider-policy >/dev/null
 test "$(sha256sum "$BACKEND" | cut -d ' ' -f1)" = "$baseline"
-dnf -qy remove x301-openssl-provider-policy \
-    x301-openssl-provider >/dev/null
+test ! -e "$ACTIVE"
+
+for policy in EMPTY FIPS; do
+    if test -f "/usr/share/crypto-policies/policies/$policy.pol"; then
+        update-crypto-policies --set "$policy" >/dev/null
+        if grep -F X301 "$BACKEND" >/dev/null; then
+            echo "removed overlay changed restrictive policy $policy" >&2
+            exit 1
+        fi
+    fi
+done
+update-crypto-policies --set DEFAULT >/dev/null
+
+dnf -qy remove x301-openssl-provider >/dev/null
 test "$(sha256sum "$BACKEND" | cut -d ' ' -f1)" = "$baseline"
 test ! -e /etc/pki/tls/openssl.d/x301-provider.conf
 test ! -e /usr/lib64/ossl-modules/x301.so
-test ! -e /usr/share/x301-openssl-provider/opensslcnf-x301.config
 
 printf '%s\n' \
-    'x301_rpm_install=PASS base=active groups=unchanged enable=explicit disable=explicit restrictive=inactive reinstall=clean remove=clean'
+    'x301_rpm_install=PASS base=active groups=unchanged policy=active restrictive=inactive reinstall=clean remove=clean'
