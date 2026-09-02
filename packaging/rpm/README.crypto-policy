@@ -1,26 +1,10 @@
-X301 OpenSSL policy overlay
-===========================
+# X301 laboratory OpenSSL overlay
 
-The base `x301-openssl-provider` package activates the provider but does not
-change the system TLS group preference. This optional subpackage installs an
-inactive OpenSSL overlay template at:
+Installing `x301-openssl-provider-policy` installs an OpenSSL configuration
+overlay that places `X301MLKEM1024` before the nonempty group list generated
+by the selected Fedora crypto policy.
 
-    /usr/share/x301-openssl-provider/opensslcnf-x301.config
-
-Fedora `.pmod` files reject unregistered provider group names, so this is not a
-normal Fedora subpolicy. To enable the overlay explicitly for a laboratory
-system using a permissive policy:
-
-    sudo install -Dpm 0644 \
-        /usr/share/x301-openssl-provider/opensslcnf-x301.config \
-        /etc/crypto-policies/local.d/opensslcnf-zz-x301.config
-    sudo update-crypto-policies
-
-Do not enable this overlay under FIPS, BSI, EMPTY, GOST-only or another policy
-whose algorithm set must remain closed. Remove it before selecting such a
-policy:
-
-    sudo rm -f /etc/crypto-policies/local.d/opensslcnf-zz-x301.config
-    sudo update-crypto-policies
-
-Restart long-running OpenSSL applications after either command sequence.
+This is not a native Fedora `.pmod`. Do not install or retain this package with
+FIPS, BSI, EMPTY or another policy whose OpenSSL group list is empty or closed.
+Remove the package and regenerate the selected crypto policy before switching
+to such a policy.

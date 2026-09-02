@@ -4,18 +4,19 @@
 %global shortcommit 73b30af
 %global snapshot 20260902
 %global source_manifest_sha256 0f98382033e319ac91aa0b17df33a0b0885087cb3c70d8f0010aa925af3f7632
+%global openssl_fork_evr 1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           x301-openssl-provider
 Version:        0.1.0
-Release:        0.6.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.8.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental X301 key-exchange provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/x301-openssl-provider
 Source0:        %{url}/archive/%{commit}/x301-openssl-provider-%{commit}.tar.gz
 Source1:        x301-provider.conf
-Source2:        opensslcnf-x301.config
+Source2:        opensslcnf-zz-x301.config
 Source3:        README.crypto-policy
 Patch0:         0001-Build-X301-shim-with-RPM-native-flags.patch
 
@@ -24,29 +25,34 @@ BuildRequires:  cargo >= 1.91
 BuildRequires:  rust >= 1.91
 BuildRequires:  gcc
 BuildRequires:  binutils
-BuildRequires:  pkgconfig(openssl) >= 3.5.7
-%if %{with tests}
-BuildRequires:  openssl
-%endif
+BuildRequires:  openssl = %{openssl_fork_evr}
+BuildRequires:  openssl-devel = %{openssl_fork_evr}
 
-Requires:       openssl-libs%{?_isa} >= 1:3.5.7
+Requires:       openssl-libs%{?_isa} = %{openssl_fork_evr}
+
+# crypto-bigint is a source-bound path dependency.
+Provides:       bundled(crate(crypto-bigint)) = 0.7.5
+Provides:       bundled(crate(cpufeatures)) = 0.3.0
 
 %description
 X301 is an experimental key-exchange algorithm. The provider also exposes the
 private-use X301MLKEM1024 TLS 1.3 hybrid group and delegates ML-KEM-1024 to
-OpenSSL. Installing this package activates the provider system-wide but does
-not change the system TLS group preference. X301 is not standardized or FIPS
-validated.
+OpenSSL. This package activates the provider but does not change the global TLS
+group preference. X301 is not standardized or FIPS validated.
 
 %package policy
-Summary:        Explicit OpenSSL policy overlay for X301MLKEM1024
+Summary:        Explicit X301 OpenSSL group overlay for laboratory review
+BuildArch:      noarch
 Requires:       %{name}%{?_isa} = %{version}-%{release}
+Requires:       crypto-policies-scripts
+Requires(posttrans): crypto-policies-scripts
+Requires(postun): crypto-policies-scripts
 
 %description policy
-This optional package installs an inactive OpenSSL crypto-policy overlay
-template for explicitly enabling X301MLKEM1024 system-wide. Fedora
-crypto-policies cannot express unregistered provider group names in a normal
-subpolicy. Installing this subpackage does not change the active policy.
+This laboratory package installs an OpenSSL overlay that places X301MLKEM1024
+before the nonempty Fedora group list. It is not a native
+crypto-policies module and must not be used with FIPS, BSI, EMPTY or another
+group-empty policy.
 
 %prep
 %setup -q -n x301-openssl-provider-%{commit}
@@ -78,19 +84,16 @@ pushd crates/x301-provider
 %{cargo_license -f tls-x301-mlkem1024} > ../../../LICENSE.dependencies
 popd
 %cargo_vendor_manifest
-# Fedora 43 cargo2rpm includes workspace path packages in this file although
-# the bundled-crate generator accepts registry entries only.
 sed -i '\| (/|d' cargo-vendor.txt
 popd
 
 %install
-install -Dpm 0755 \
-    provider/target/rpm/libx301.so \
+install -Dpm 0755 provider/target/rpm/libx301.so \
     %{buildroot}%{provider_modulesdir}/x301.so
 install -Dpm 0644 %{SOURCE1} \
     %{buildroot}%{_sysconfdir}/pki/tls/openssl.d/x301-provider.conf
 install -Dpm 0644 %{SOURCE2} \
-    %{buildroot}%{_datadir}/%{name}/opensslcnf-x301.config
+    %{buildroot}%{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config
 
 %check
 %if %{with tests}
@@ -138,8 +141,9 @@ env OPENSSL_CONF=/dev/null \
     OPENSSL_MODULES=%{buildroot}%{provider_modulesdir} \
     "$test_dir/provider_x301_nested_properties" \
     %{buildroot}%{provider_modulesdir}
-openssl list -provider-path %{buildroot}%{provider_modulesdir} \
-    -provider default -provider x301 \
+env OPENSSL_CONF=/dev/null \
+    OPENSSL_MODULES=%{buildroot}%{provider_modulesdir} \
+    openssl list -provider default -provider x301 \
     -key-exchange-algorithms | grep -F X301 >/dev/null
 %endif
 
@@ -154,33 +158,40 @@ openssl list -provider-path %{buildroot}%{provider_modulesdir} \
 
 %files policy
 %doc README.crypto-policy
-%{_datadir}/%{name}/opensslcnf-x301.config
+%config(noreplace) %{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config
 
 %posttrans
 echo 'WARNING: X301 and X301MLKEM1024 are experimental, non-standardized and not FIPS validated.'
 echo 'The provider is active; global TLS group preferences are unchanged.'
-echo 'See the optional x301-openssl-provider-policy package for an explicit overlay template.'
+exit 0
+
+%posttrans policy
+if ! %{_bindir}/update-crypto-policies; then
+    echo 'error: failed to regenerate the selected crypto policy' >&2
+    exit 1
+fi
+echo 'WARNING: The X301 laboratory OpenSSL group overlay is active.'
+echo 'Remove this package before selecting FIPS, BSI, EMPTY or a group-empty policy.'
+exit 0
+
+%postun policy
+if [ "$1" -eq 0 ]; then
+    if ! %{_bindir}/update-crypto-policies; then
+        echo 'error: failed to regenerate crypto policy after removing X301 policy' >&2
+        exit 1
+    fi
+fi
 exit 0
 
 %changelog
-* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.6.20260902git73b30af
-- Pin the source-checked provider and hybrid assurance repairs
+* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.8.20260902git73b30af
+- Pin the X301-only provider and hybrid assurance repairs
 - Verify the complete source inventory before applying the Fedora build patch
-- Keep the policy overlay limited to X301MLKEM1024
+- Limit the policy overlay to X301MLKEM1024
 
-* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.5.20260901git3ce8ea4
-- Build from the separated X301-only provider workspace
-- Use the core public-key canonicalizer in provider imports
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.7.20260901git89facb1
+- Add the optional laboratory X301 group-overlay policy package
 
-* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.4.20260901gita695bb2
-- Keep the base package out of global TLS group policy
-- Add an inactive, explicit OpenSSL policy-overlay template subpackage
-
-* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.3.20260901gita695bb2
-- Add the x301-crypto-policy(8) manual page
-
-* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.2.20260901gita695bb2
-- Rename the hybrid group to X301MLKEM1024 for OpenSSL X-family consistency
-
-* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.1.20260901gitf44784c
-- Initial split X301 provider package
+* Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.6.20260901git89facb1
+- Pin the reviewed X301 source and OpenSSL fork
+- Keep TLS groups available only through explicit selection
