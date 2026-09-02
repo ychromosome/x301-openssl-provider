@@ -43,6 +43,8 @@ dnf -qy install "$BASE" >/dev/null
 test "$(sha256sum "$BACKEND" | cut -d ' ' -f1)" = "$baseline"
 test ! -e "$ACTIVE"
 openssl list -providers | grep -F x301 >/dev/null
+openssl list -providers | grep -Fx '  default' >/dev/null
+openssl list -key-exchange-algorithms | grep -F X25519 >/dev/null
 
 dnf -qy install "$POLICY" >/dev/null
 test "$(sha256sum "$BACKEND" | cut -d ' ' -f1)" = "$baseline"
@@ -62,7 +64,10 @@ install -Dpm 0644 \
     /usr/share/x301-openssl-provider/opensslcnf-x301.config "$ACTIVE"
 update-crypto-policies >/dev/null
 grep -F X301MLKEM1024 "$BACKEND" >/dev/null
-grep -F '?X301/' "$BACKEND" >/dev/null
+if grep -F '?X301/' "$BACKEND" >/dev/null; then
+    echo 'policy overlay lists raw X301 as a TLS group' >&2
+    exit 1
+fi
 rm -f "$ACTIVE"
 update-crypto-policies >/dev/null
 test "$(sha256sum "$BACKEND" | cut -d ' ' -f1)" = "$baseline"

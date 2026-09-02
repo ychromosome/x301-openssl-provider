@@ -47,7 +47,10 @@ update-crypto-policies --set DEFAULT >/dev/null
 install -pm 0644 "$INSTALLED" "$ACTIVE"
 update-crypto-policies >/dev/null
 grep -F 'X301MLKEM1024' "$BACKEND" >/dev/null
-grep -F '?X301/' "$BACKEND" >/dev/null
+if grep -F '?X301/' "$BACKEND" >/dev/null; then
+    echo 'policy overlay lists raw X301 as a TLS group' >&2
+    exit 1
+fi
 rm -f "$ACTIVE"
 update-crypto-policies >/dev/null
 if grep -F X301 "$BACKEND" >/dev/null; then

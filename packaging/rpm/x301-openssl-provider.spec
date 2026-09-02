@@ -1,15 +1,15 @@
 %bcond_without tests
 
-%global commit 3ce8ea457e3769e1e9c56e7aa4d5b780c8e77b0c
-%global shortcommit 3ce8ea4
-%global snapshot 20260901
-%global source_manifest_sha256 8629f7d182d2e7b2e9e62554eb35fd66a1a0aab33c25894a06eac7c43ed2c0e5
+%global commit 73b30afd26abdf0fb49cca4249750dc812f8f96a
+%global shortcommit 73b30af
+%global snapshot 20260902
+%global source_manifest_sha256 0f98382033e319ac91aa0b17df33a0b0885087cb3c70d8f0010aa925af3f7632
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
 Name:           x301-openssl-provider
 Version:        0.1.0
-Release:        0.5.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.6.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental X301 key-exchange provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/x301-openssl-provider
@@ -39,20 +39,22 @@ not change the system TLS group preference. X301 is not standardized or FIPS
 validated.
 
 %package policy
-Summary:        Explicit OpenSSL policy overlay template for X301 groups
+Summary:        Explicit OpenSSL policy overlay for X301MLKEM1024
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 
 %description policy
 This optional package installs an inactive OpenSSL crypto-policy overlay
-template for explicitly enabling X301MLKEM1024 and X301 system-wide. Fedora
+template for explicitly enabling X301MLKEM1024 system-wide. Fedora
 crypto-policies cannot express unregistered provider group names in a normal
 subpolicy. Installing this subpackage does not change the active policy.
 
 %prep
 %setup -q -n x301-openssl-provider-%{commit}
-test "$(sha256sum SOURCE_MANIFEST.sha256 | awk '{ print $1 }')" = \
-    %{source_manifest_sha256}
-sha256sum --strict --quiet -c SOURCE_MANIFEST.sha256
+env -i PATH=/usr/bin:/bin HOME=%{_builddir} LC_ALL=C \
+    ED301_HERMETIC_LAUNCH=1 \
+    ED301_SOURCE_MODE=archive \
+    ED301_EXPECTED_SOURCE_MANIFEST_SHA256=%{source_manifest_sha256} \
+    /bin/sh scripts/verify-source-tree.sh
 %autopatch -p1
 install -pm 0644 %{SOURCE3} README.crypto-policy
 pushd provider
@@ -161,6 +163,11 @@ echo 'See the optional x301-openssl-provider-policy package for an explicit over
 exit 0
 
 %changelog
+* Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.6.20260902git73b30af
+- Pin the source-checked provider and hybrid assurance repairs
+- Verify the complete source inventory before applying the Fedora build patch
+- Keep the policy overlay limited to X301MLKEM1024
+
 * Tue Sep 01 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.5.20260901git3ce8ea4
 - Build from the separated X301-only provider workspace
 - Use the core public-key canonicalizer in provider imports

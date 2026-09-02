@@ -1,28 +1,28 @@
 diff --git a/provider/Cargo.lock b/provider/Cargo.lock
-index 6b5c2cf..9c3fa39 100644
+index 2ee75e9..35ad7ae 100644
 --- a/provider/Cargo.lock
 +++ b/provider/Cargo.lock
-@@ -199,6 +199,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+@@ -92,6 +92,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
  name = "x301-provider"
  version = "0.1.0"
  dependencies = [
 + "cc",
   "crypto-bigint",
   "ed301-eddsa",
-  "zeroize",
+  "ed301-valgrind-client",
 diff --git a/provider/crates/x301-provider/Cargo.toml b/provider/crates/x301-provider/Cargo.toml
-index 1d59be4..6ad6243 100644
+index 4dfb67a..02284b8 100644
 --- a/provider/crates/x301-provider/Cargo.toml
 +++ b/provider/crates/x301-provider/Cargo.toml
-@@ -28,3 +28,6 @@ tls-x301-mlkem1024 = []
- crypto-bigint = { version = "=0.7.5", default-features = false }
- ed301-eddsa = { path = "../../../crates/ed301-eddsa", features = ["x301"] }
+@@ -33,3 +33,6 @@ crypto-bigint = { version = "=0.7.5", default-features = false }
+ ed301-eddsa = { path = "../../../crates/ed301-eddsa", default-features = false, features = ["x301"] }
+ ed301-valgrind-client = { path = "../../../secret-taint/valgrind-client", optional = true }
  zeroize = { version = "=1.9.0", default-features = false }
 +
 +[build-dependencies]
 +cc = { version = "=1.2.66", default-features = false }
 diff --git a/provider/crates/x301-provider/build.rs b/provider/crates/x301-provider/build.rs
-index f14ee1a..8d9575c 100644
+index 828cb59..b223949 100644
 --- a/provider/crates/x301-provider/build.rs
 +++ b/provider/crates/x301-provider/build.rs
 @@ -6,7 +6,6 @@
@@ -70,7 +70,7 @@ index f14ee1a..8d9575c 100644
      ] {
          println!("cargo:rerun-if-env-changed={name}");
      }
-@@ -104,111 +107,51 @@ fn main() {
+@@ -104,14 +107,15 @@ fn main() {
      };
      require_exact_environment("CC", compiler_path);
      require_exact_environment("AR", "/usr/bin/ar");
@@ -90,7 +90,8 @@ index f14ee1a..8d9575c 100644
 +    let _output_dir = canonical_directory("OUT_DIR");
      let hybrid = env::var_os("CARGO_FEATURE_TLS_X301_MLKEM1024").is_some();
      let sanitizer = env::var_os("CARGO_FEATURE_TEST_SANITIZER").is_some();
-     assert!(
+     let secret_taint = env::var_os("CARGO_FEATURE_SECRET_TAINT_INSTRUMENTATION").is_some();
+@@ -119,103 +123,39 @@ fn main() {
          !(sanitizer && fuzz_coverage),
          "sanitizer and fuzz-coverage variants must remain separate"
      );
@@ -137,9 +138,16 @@ index f14ee1a..8d9575c 100644
      }
      if env::var_os("CARGO_FEATURE_TEST_FAILPOINT").is_some() {
 -        compiler.arg("-DX301_TEST_FAILPOINT_ARTIFACT=1");
--    }
--    if hybrid {
++        build.define("X301_TEST_FAILPOINT_ARTIFACT", "1");
+     }
+     if hybrid {
 -        compiler.arg("-DX301_ENABLE_HYBRID_MLKEM1024=1");
++        build
++            .define("X301_ENABLE_HYBRID_MLKEM1024", "1")
++            .file("c/hybrid_kem.c");
+     }
+     if secret_taint {
+-        compiler.arg("-DX301_SECRET_TAINT_INSTRUMENTATION=1");
 -    }
 -    assert!(
 -        compiler
@@ -174,6 +182,9 @@ index f14ee1a..8d9575c 100644
 -        if fuzz_coverage {
 -            hybrid_compiler.arg("-fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp");
 -        }
+-        if secret_taint {
+-            hybrid_compiler.arg("-DX301_SECRET_TAINT_INSTRUMENTATION=1");
+-        }
 -        assert!(
 -            hybrid_compiler
 -                .status()
@@ -181,15 +192,12 @@ index f14ee1a..8d9575c 100644
 -                .success(),
 -            "C hybrid KEM compilation failed"
 -        );
-+        build.define("X301_TEST_FAILPOINT_ARTIFACT", "1");
-     }
+-    }
 -    let mut archiver = Command::new("/usr/bin/ar");
 -    archiver.arg("crs").arg(&archive).arg(&object);
-     if hybrid {
+-    if hybrid {
 -        archiver.arg(&hybrid_object);
-+        build
-+            .define("X301_ENABLE_HYBRID_MLKEM1024", "1")
-+            .file("c/hybrid_kem.c");
++        build.define("X301_SECRET_TAINT_INSTRUMENTATION", "1");
      }
 -    assert!(
 -        archiver
