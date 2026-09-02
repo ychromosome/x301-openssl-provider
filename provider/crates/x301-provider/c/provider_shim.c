@@ -356,17 +356,18 @@ static int x301_key_export(
     int result = 0;
     const int wants_private = x301_wants_private(selection);
     const int wants_public = x301_wants_public(selection);
+    int has_private;
+    int has_public;
 
     if (key == NULL || key->provider == NULL || key->inner == NULL
             || parameter_callback == NULL
             || !x301_selection_supported(selection)
             || (!wants_private && !wants_public))
         goto cleanup;
-    if (key->provider->rust->key_has(
-            key->inner, wants_private, wants_public) != 1)
-        goto cleanup;
+    has_private = key->provider->rust->key_has(key->inner, 1, 0) == 1;
+    has_public = key->provider->rust->key_has(key->inner, 0, 1) == 1;
 
-    if (wants_private) {
+    if (wants_private && has_private) {
         if (key->provider->rust->key_get_private(
                 key->inner, private_key, sizeof(private_key)) != 1)
             goto cleanup;
@@ -376,7 +377,7 @@ static int x301_key_export(
                 private_key,
                 sizeof(private_key));
     }
-    if (wants_public) {
+    if (wants_public && has_public) {
         if (key->provider->rust->key_get_public(
                 key->inner, public_key, sizeof(public_key)) != 1)
             goto cleanup;
@@ -386,6 +387,8 @@ static int x301_key_export(
                 public_key,
                 sizeof(public_key));
     }
+    if (parameter_count == 0)
+        goto cleanup;
     export_params[parameter_count] = (OSSL_PARAM)OSSL_PARAM_END;
     result = parameter_callback(export_params, callback_argument);
 
@@ -1161,7 +1164,12 @@ static int x301_core_version_is_supported(
             || !x301_parse_decimal_component(&cursor, &minor)
             || (*cursor != '.' && *cursor != '\0'))
         return 0;
+#if defined(X301_ENABLE_HYBRID_MLKEM1024)
+    if (major == 3U && minor < 5U)
+        return 0;
+#else
     (void)minor;
+#endif
     return major == X301_SUPPORTED_CORE_MAJOR;
 }
 
@@ -1260,6 +1268,19 @@ int x301_shim_init(
         clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
         return 0;
     }
+#if defined(X301_ENABLE_HYBRID_MLKEM1024)
+    {
+        EVP_KEYMGMT *mlkem = EVP_KEYMGMT_fetch(
+            provider->libctx, "ML-KEM-1024", NULL);
+
+        if (mlkem == NULL) {
+            OSSL_LIB_CTX_free(provider->libctx);
+            clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
+            return 0;
+        }
+        EVP_KEYMGMT_free(mlkem);
+    }
+#endif
 
     *provider_context = provider;
     *output_dispatch = X301_PROVIDER_DISPATCH;

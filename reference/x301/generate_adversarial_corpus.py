@@ -520,21 +520,10 @@ def render_evp_data(document: dict[str, Any]) -> str:
             ]
         )
 
-    # O2 cases that the stock evp_test grammar can express. Raw-key length
-    # failures occur while parsing global key definitions and therefore have
-    # no Result stanza in upstream evp_test; those stay in the C API harness.
+    # Raw-key length and cross-keytype failures occur while parsing global key
+    # definitions and therefore stay in the C and joint-integration harnesses.
     lines.extend(
         [
-            (
-                "PublicKeyRaw=X301-O2-ED301-PEER:Ed301-EdDSA-draft-00:"
-                "ebf3c760f2236f9e5295f3f9f783b37a49064a809ed5689bb231a2ffeceff922"
-                "c97153316112"
-            ),
-            "",
-            "Derive=X301-PAIR-PRIVATE",
-            "PeerKey=X301-O2-ED301-PEER",
-            "Result = DERIVE_SET_PEER_ERROR",
-            "",
             "Derive=X301-PAIR-PRIVATE",
             "Result = DERIVE_SET_PEER_ERROR",
             "",

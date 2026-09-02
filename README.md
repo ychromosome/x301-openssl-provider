@@ -22,7 +22,8 @@ builds no Ed301 signature provider. Every derive uses the same Montgomery
 ladder.
 
 X301MLKEM1024 fetches `ML-KEM-1024` through EVP in the provider child library
-context. This repository contains no ML-KEM implementation or hybrid KDF.
+context. The hybrid module refuses to load when that fetch is unavailable.
+This repository contains no ML-KEM implementation or hybrid KDF.
 
 | Value | Layout | Bytes |
 | --- | --- | ---: |

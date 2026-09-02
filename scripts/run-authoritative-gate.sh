@@ -1,5 +1,11 @@
-#!/usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C /bin/sh
+#!/usr/bin/env -S -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C X301_LAUNCH_STAGE=clean /bin/sh
 set -eu
+
+if [ "${X301_LAUNCH_STAGE:-}" != clean ]; then
+    exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/nonexistent LC_ALL=C \
+        X301_LAUNCH_STAGE=clean /bin/sh "$0" "$@"
+fi
+unset X301_LAUNCH_STAGE
 
 PATH=/usr/bin:/bin
 HOME=/nonexistent
@@ -48,6 +54,7 @@ esac
 
 GATE=$1
 shift
+TARGET_SHELL=/bin/sh
 case "$GATE" in
     environment-check)
         TARGET=$ROOT/scripts/check-rust-build-environment.sh
@@ -93,6 +100,7 @@ case "$GATE" in
         ;;
     build-openssl-provider-lane)
         TARGET=$ROOT/scripts/build-openssl-provider-lane.sh
+        TARGET_SHELL=/bin/bash
         ;;
     verify-openssl-provider-lane)
         TARGET=$ROOT/scripts/verify-openssl-provider-lane.sh
@@ -104,6 +112,7 @@ case "$GATE" in
             shift 2
         fi
         TARGET=$ROOT/scripts/test-x301-provider-contracts.sh
+        TARGET_SHELL=/bin/bash
         ;;
     test-x301-tls)
         while [ "$#" -ge 2 ]; do
@@ -121,8 +130,12 @@ case "$GATE" in
             shift 2
         done
         TARGET=$ROOT/scripts/test-x301-tls.sh
+        TARGET_SHELL=/bin/bash
         ;;
     *) usage ;;
 esac
 
-exec "$TARGET" "$@"
+if [ "$TARGET_SHELL" = /bin/bash ]; then
+    exec /bin/bash --noprofile --norc "$TARGET" "$@"
+fi
+exec /bin/sh "$TARGET" "$@"

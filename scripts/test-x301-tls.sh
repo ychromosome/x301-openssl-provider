@@ -17,6 +17,7 @@ CARGO=$($ROOT/scripts/resolve-rust-tool.sh cargo)
 RUSTC=$($ROOT/scripts/resolve-rust-tool.sh rustc)
 RUST_BIN=$(dirname -- "$CARGO")
 umask 077
+ORIGINAL_ARGS=("$@")
 SS_BIN=
 for candidate in /usr/bin/ss /usr/sbin/ss; do
     if test -x "$candidate"; then
@@ -46,10 +47,10 @@ if test "$#" -ne 4; then
     exit 2
 fi
 
-LANE_357_ROOT=$1
-LANE_357_EVIDENCE=$2
-LANE_401_ROOT=$3
-LANE_401_EVIDENCE=$4
+LANE_358_ROOT=$1
+LANE_358_EVIDENCE=$2
+LANE_402_ROOT=$3
+LANE_402_EVIDENCE=$4
 
 if test -n "${X301_TLS_RESULT_ROOT:-}"; then
     RESULT_ROOT=$X301_TLS_RESULT_ROOT
@@ -64,28 +65,28 @@ fi
 RESULT_ROOT=$(readlink -f -- "$RESULT_ROOT")
 mkdir -m 700 -- "$RESULT_ROOT/openssl-lanes"
 sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
-    "$LANE_357_ROOT" 3.5.8 "$LANE_357_EVIDENCE" \
+    "$LANE_358_ROOT" 3.5.8 "$LANE_358_EVIDENCE" \
     "$RESULT_ROOT/openssl-lanes/3.5.8"
 sh "$ROOT/scripts/materialize-openssl-provider-lane.sh" \
-    "$LANE_401_ROOT" 4.0.2 "$LANE_401_EVIDENCE" \
+    "$LANE_402_ROOT" 4.0.2 "$LANE_402_EVIDENCE" \
     "$RESULT_ROOT/openssl-lanes/4.0.2"
-LANE_357_ROOT=$RESULT_ROOT/openssl-lanes/3.5.8
-LANE_401_ROOT=$RESULT_ROOT/openssl-lanes/4.0.2
+LANE_358_ROOT=$RESULT_ROOT/openssl-lanes/3.5.8
+LANE_402_ROOT=$RESULT_ROOT/openssl-lanes/4.0.2
 
 record_run_identity() {
     mkdir -m 700 -- "$RESULT_ROOT/inputs"
-    cp -- "$LANE_357_ROOT/logs/3.5.8/evidence_manifest.sha256" \
+    cp -- "$LANE_358_ROOT/logs/3.5.8/evidence_manifest.sha256" \
         "$RESULT_ROOT/inputs/openssl-3.5.8-evidence-manifest.sha256"
-    cp -- "$LANE_401_ROOT/logs/4.0.2/evidence_manifest.sha256" \
+    cp -- "$LANE_402_ROOT/logs/4.0.2/evidence_manifest.sha256" \
         "$RESULT_ROOT/inputs/openssl-4.0.2-evidence-manifest.sha256"
-    cp -- "$LANE_357_ROOT/PRIVATE_LANE_SHA256SUMS" \
+    cp -- "$LANE_358_ROOT/PRIVATE_LANE_SHA256SUMS" \
         "$RESULT_ROOT/inputs/openssl-3.5.8-private-lane.sha256"
-    cp -- "$LANE_401_ROOT/PRIVATE_LANE_SHA256SUMS" \
+    cp -- "$LANE_402_ROOT/PRIVATE_LANE_SHA256SUMS" \
         "$RESULT_ROOT/inputs/openssl-4.0.2-private-lane.sha256"
     test "$(sha256sum "$RESULT_ROOT/inputs/openssl-3.5.8-evidence-manifest.sha256" | awk '{print $1}')" \
-        = "$LANE_357_EVIDENCE"
+        = "$LANE_358_EVIDENCE"
     test "$(sha256sum "$RESULT_ROOT/inputs/openssl-4.0.2-evidence-manifest.sha256" | awk '{print $1}')" \
-        = "$LANE_401_EVIDENCE"
+        = "$LANE_402_EVIDENCE"
     (
         cd "$ROOT"
         find Cargo.toml Cargo.lock \
@@ -115,10 +116,20 @@ record_run_identity() {
     {
         printf 'lane\tevidence_manifest\texternal_evidence_sha256\n'
         printf '3.5.8\tinputs/openssl-3.5.8-evidence-manifest.sha256\t%s\n' \
-            "$LANE_357_EVIDENCE"
+            "$LANE_358_EVIDENCE"
         printf '4.0.2\tinputs/openssl-4.0.2-evidence-manifest.sha256\t%s\n' \
-            "$LANE_401_EVIDENCE"
+            "$LANE_402_EVIDENCE"
     } >"$RESULT_ROOT/RUN_INPUTS.tsv"
+    {
+        printf 'source_mode=%s\n' "${ED301_SOURCE_MODE:-unknown}"
+        printf 'source_manifest_sha256=%s\n' \
+            "${ED301_EXPECTED_SOURCE_MANIFEST_SHA256:-unknown}"
+        printf 'source_commit=%s\n' \
+            "${ED301_EXPECTED_GIT_COMMIT:-not-applicable-archive}"
+        printf 'argv='
+        printf ' %q' "$0" "${ORIGINAL_ARGS[@]}"
+        printf '\n'
+    } >"$RESULT_ROOT/RUN_IDENTITY.txt"
 }
 
 fail() {
@@ -351,6 +362,8 @@ run_mutation_matrix() {
     local direction=$7
     local component=$8
     local label=$9
+    local mode=${10:-flip}
+    local case_count=${11:-64}
     local mutation_dir=$home/r5-$label
     local case_index case_label client_status encrypted plaintext_alerts stage
 
@@ -360,11 +373,11 @@ run_mutation_matrix() {
     printf 'case\tdirection\tcomponent\tclient_status\tfailure_stage\tencrypted_records\n' \
         >"$mutation_dir/RESULTS.tsv"
     start_server "$openssl" "$prefix" "$modules" "$mutation_dir" \
-        "$cert" "$key" X301MLKEM1024 64 yes "$label"
-    for case_index in $(/usr/bin/seq 0 63); do
+        "$cert" "$key" X301MLKEM1024 "$case_count" yes "$label"
+    for case_index in $(/usr/bin/seq 0 "$((case_count - 1))"); do
         case_label=$(printf 'case-%02d' "$case_index")
         start_wire_mutator "$mutation_dir" "$case_label" \
-            "$direction" "$component" flip "$case_index"
+            "$direction" "$component" "$mode" "$case_index"
         if run_client "$openssl" "$prefix" "$modules" "$mutation_dir" \
                 "$cert" X301MLKEM1024 "$case_label" -brief; then
             fail "$label mutation $case_index unexpectedly completed"
@@ -374,7 +387,7 @@ run_mutation_matrix() {
         test "$client_status" -eq 1 \
             || fail "$label mutation $case_index returned $client_status"
         finish_wire_mutator
-        require_text "mutated=1 mode=flip direction=$direction" "$PROXY_LOG"
+        require_text "mutated=1 mode=$mode direction=$direction" "$PROXY_LOG"
         require_text "component=$component case_index=$case_index" "$PROXY_LOG"
         reject_text 'CONNECTION ESTABLISHED' \
             "$mutation_dir/$case_label-client.log"
@@ -401,7 +414,7 @@ run_mutation_matrix() {
                 "$mutation_dir/$case_label-client.log"
             stage=share-parsing
         fi
-        if test "$direction" = server; then
+        if test "$direction" = server && test "$mode" = flip; then
             test "$stage" = protected-record-auth \
                 || fail "server ML-KEM mutation $case_index failed too early"
         fi
@@ -412,7 +425,7 @@ run_mutation_matrix() {
     done
     finish_server no
     test "$(/usr/bin/awk 'END { print NR - 1 }' \
-        "$mutation_dir/RESULTS.tsv")" -eq 64
+        "$mutation_dir/RESULTS.tsv")" -eq "$case_count"
     (
         cd "$mutation_dir"
         find . -type f ! -name SHA256SUMS -exec sha256sum {} + | sort -k2
@@ -552,17 +565,26 @@ run_long_handshake_lane() {
                 -groups X301MLKEM1024 -servername localhost \
                 -verify_hostname localhost -verify_return_error \
                 -CAfile "$cert" -provider default -provider x301 \
-                -reconnect -brief <"$long/request.txt" \
+                -reconnect -brief -msg -msgfile "$long/valgrind-client.msg" \
+                <"$long/request.txt" \
                 >"$long/valgrind-client.log" 2>&1
     require_text 'Negotiated TLS1.3 group: X301MLKEM1024' \
         "$long/valgrind-client.log"
     require_text 'Verification: OK' "$long/valgrind-client.log"
+    "$KEYSHARE_PARSER" "$long/valgrind-client.msg" all-client \
+        >"$long/valgrind-client-keyshares.txt"
+    test "$(wc -l <"$long/valgrind-client-keyshares.txt")" -eq 6
+    test "$(awk '{ for (i=1; i<=NF; i++) if ($i ~ /^mlkem_sha256=/) print $i }' \
+        "$long/valgrind-client-keyshares.txt" | sort -u | wc -l)" -eq 6
+    test "$(awk '{ for (i=1; i<=NF; i++) if ($i ~ /^x301_sha256=/) print $i }' \
+        "$long/valgrind-client-keyshares.txt" | sort -u | wc -l)" -eq 6
     finish_server yes
 
     (
         cd "$long"
         /usr/bin/sha256sum RESULTS.tsv first-client.log last-client.log \
-            valgrind-client.log >SHA256SUMS
+            valgrind-client.log valgrind-client.msg \
+            valgrind-client-keyshares.txt >SHA256SUMS
         /usr/bin/sha256sum --strict --quiet -c SHA256SUMS
     )
     printf 'PASS full_hybrid_handshakes=%s valgrind_connections=6\n' \
@@ -795,7 +817,13 @@ run_lane() {
     run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
         "$cert" "$key" client x301 client-x301
     run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key" client x301 client-x301-low-order low-order 3
+    run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key" client x301 client-swapped-components swap 1
+    run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
         "$cert" "$key" server mlkem server-mlkem
+    run_mutation_matrix "$openssl" "$prefix" "$modules" "$build" \
+        "$cert" "$key" server x301 server-x301
 
     # R6: retain the X301MLKEM1024 codepoint but shrink the syntactically
     # well-formed KeyShareEntry to X25519MLKEM768's 1216-byte layout.
@@ -826,8 +854,14 @@ run_lane() {
             r5-client-mlkem/SHA256SUMS \
             r5-client-x301/RESULTS.tsv \
             r5-client-x301/SHA256SUMS \
+            r5-client-x301-low-order/RESULTS.tsv \
+            r5-client-x301-low-order/SHA256SUMS \
+            r5-client-swapped-components/RESULTS.tsv \
+            r5-client-swapped-components/SHA256SUMS \
             r5-server-mlkem/RESULTS.tsv \
             r5-server-mlkem/SHA256SUMS \
+            r5-server-x301/RESULTS.tsv \
+            r5-server-x301/SHA256SUMS \
             r6-foreign-size/foreign-size-client.log \
             r6-foreign-size/foreign-size-proxy.log >SHA256SUMS
         /usr/bin/sha256sum \
@@ -847,29 +881,30 @@ run_lane() {
     (cd "$build" && /usr/bin/sha256sum --strict --quiet -c SHA256SUMS)
     printf '%s\n' \
         "PASS lane=$lane lane_evidence_sha256=$lane_evidence t8_hybrid=PASS r2_hrr=PASS r3_fragmentation=PASS" \
-        'r4_fallback=PASS r4_no_common=PASS r5_client_mlkem=64/64 r5_client_x301=64/64' \
-        "r5_server_mlkem=64/64 r6_foreign_size=PASS r7_resumption=PASS r7_fresh_mlkem=PASS r7_fresh_x301=PASS d2_aliases=7/7 l2_full_handshakes=$LONG_HANDSHAKES" \
+        'r4_fallback=PASS r4_no_common=PASS r5_client_mlkem=64/64 r5_client_x301=64/64 r5_client_x301_low_order=3/3 r5_client_component_swap=1/1' \
+        "r5_server_mlkem=64/64 r5_server_x301=64/64 r6_foreign_size=PASS r7_resumption=PASS r7_fresh_mlkem=PASS r7_fresh_x301=PASS d2_aliases=7/7 l2_full_handshakes=$LONG_HANDSHAKES" \
         | tee "$build/STATUS.txt"
 }
 
 record_run_identity
-run_lane 3.5.8 "$LANE_357_ROOT" "$LANE_357_EVIDENCE"
-run_lane 4.0.2 "$LANE_401_ROOT" "$LANE_401_EVIDENCE"
-run_cross_lane 3.5.8 "$LANE_357_ROOT" 4.0.2 "$LANE_401_ROOT" \
-    cross-357-client-401-server
-run_cross_lane 4.0.2 "$LANE_401_ROOT" 3.5.8 "$LANE_357_ROOT" \
-    cross-401-client-357-server
+run_lane 3.5.8 "$LANE_358_ROOT" "$LANE_358_EVIDENCE"
+run_lane 4.0.2 "$LANE_402_ROOT" "$LANE_402_EVIDENCE"
+run_cross_lane 3.5.8 "$LANE_358_ROOT" 4.0.2 "$LANE_402_ROOT" \
+    cross-358-client-402-server
+run_cross_lane 4.0.2 "$LANE_402_ROOT" 3.5.8 "$LANE_358_ROOT" \
+    cross-402-client-358-server
 sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
-    "$LANE_357_ROOT" 3.5.8 "$LANE_357_EVIDENCE"
+    "$LANE_358_ROOT" 3.5.8 "$LANE_358_EVIDENCE"
 sh "$ROOT/scripts/verify-openssl-provider-lane.sh" \
-    "$LANE_401_ROOT" 4.0.2 "$LANE_401_EVIDENCE"
-for lane_root in "$LANE_357_ROOT" "$LANE_401_ROOT"; do
+    "$LANE_402_ROOT" 4.0.2 "$LANE_402_EVIDENCE"
+for lane_root in "$LANE_358_ROOT" "$LANE_402_ROOT"; do
     (cd "$lane_root" && \
         sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS.seal && \
         sha256sum --strict --quiet -c PRIVATE_LANE_SHA256SUMS)
 done
 (cd "$RESULT_ROOT" && sha256sum \
-    X301_SOURCE_SHA256SUMS TOOLCHAIN.txt RUN_INPUTS.tsv inputs/*.sha256 \
+    X301_SOURCE_SHA256SUMS TOOLCHAIN.txt RUN_INPUTS.tsv RUN_IDENTITY.txt \
+    inputs/*.sha256 \
     >RUN_IDENTITY_SHA256SUMS
     sha256sum --strict --quiet -c RUN_IDENTITY_SHA256SUMS)
 sh "$ROOT/scripts/require-verified-snapshot.sh"

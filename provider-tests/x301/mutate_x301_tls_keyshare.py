@@ -25,6 +25,8 @@ X301_BYTES = 38
 HYBRID_BYTES = MLKEM_BYTES + X301_BYTES
 X25519_MLKEM768_CLIENT_SHARE_BYTES = 1184 + 32
 MUTATION_CASES = 64
+P = 2**301 - 2**99 + 947
+LOW_ORDER_X301 = (0, 1, P - 1)
 
 
 class MutationError(ValueError):
@@ -214,7 +216,7 @@ def flip_component_bit(
     if component == "mlkem":
         component_start = location.key_start
         component_length = MLKEM_BYTES
-    elif component == "x301" and direction == "client":
+    elif component == "x301":
         component_start = location.key_start + MLKEM_BYTES
         component_length = X301_BYTES
     else:
@@ -265,6 +267,42 @@ def replace_with_foreign_size(message: bytes) -> tuple[bytes, str]:
     return bytes(mutable), detail
 
 
+def replace_client_x301_with_low_order(
+    message: bytes, case_index: int
+) -> tuple[bytes, str]:
+    if not 0 <= case_index < len(LOW_ORDER_X301):
+        raise MutationError("low-order case index is outside 0..2")
+    mutable = bytearray(message)
+    location = find_client_share(mutable)
+    if location.key_end - location.key_start != HYBRID_BYTES:
+        raise MutationError("client KeyShare has the wrong hybrid length")
+    start = location.key_start + MLKEM_BYTES
+    mutable[start : start + X301_BYTES] = LOW_ORDER_X301[case_index].to_bytes(
+        X301_BYTES, "little"
+    )
+    detail = (
+        f"mutated=1 mode=low-order direction=client "
+        f"group=0x{GROUP_ID:04x} component=x301 case_index={case_index}"
+    )
+    return bytes(mutable), detail
+
+
+def swap_client_components(message: bytes) -> tuple[bytes, str]:
+    mutable = bytearray(message)
+    location = find_client_share(mutable)
+    if location.key_end - location.key_start != HYBRID_BYTES:
+        raise MutationError("client KeyShare has the wrong hybrid length")
+    share = bytes(mutable[location.key_start : location.key_end])
+    mlkem = share[:MLKEM_BYTES]
+    x301 = share[MLKEM_BYTES:]
+    mutable[location.key_start : location.key_end] = x301 + mlkem
+    detail = (
+        f"mutated=1 mode=swap direction=client "
+        f"group=0x{GROUP_ID:04x} component=x301 case_index=0"
+    )
+    return bytes(mutable), detail
+
+
 def receive_exact(connection: socket.socket, length: int, clean_eof: bool = False) -> bytes:
     chunks: list[bytes] = []
     remaining = length
@@ -304,6 +342,16 @@ def relay_records(
                     payload, detail = flip_component_bit(
                         payload, direction, component, case_index
                     )
+                elif mode == "low-order":
+                    if direction != "client" or component != "x301":
+                        raise MutationError("low-order applies only to client X301")
+                    payload, detail = replace_client_x301_with_low_order(
+                        payload, case_index
+                    )
+                elif mode == "swap":
+                    if direction != "client":
+                        raise MutationError("swap applies only to ClientHello")
+                    payload, detail = swap_client_components(payload)
                 else:
                     if direction != "client":
                         raise MutationError("foreign-size applies only to ClientHello")
@@ -407,7 +455,11 @@ def main() -> int:
     parser.add_argument("--listen-port", type=int, required=True)
     parser.add_argument("--upstream-port", type=int, required=True)
     parser.add_argument("--direction", choices=("client", "server"), required=True)
-    parser.add_argument("--mode", choices=("flip", "foreign-size"), default="flip")
+    parser.add_argument(
+        "--mode",
+        choices=("flip", "foreign-size", "low-order", "swap"),
+        default="flip",
+    )
     parser.add_argument("--component", choices=("mlkem", "x301"), default="mlkem")
     parser.add_argument("--case-index", type=int, default=0)
     arguments = parser.parse_args()

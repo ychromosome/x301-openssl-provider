@@ -60,10 +60,12 @@ X301=$EVIDENCE/x301.asm
 LADDER=$EVIDENCE/x301-ladder.asm
 LOOP=$EVIDENCE/x301-ladder-loop.asm
 PUBLIC=$EVIDENCE/x301-public-from-secret.asm
+PUBLIC_MAP=$EVIDENCE/x301-public-map.asm
 BASE_SELECT=$EVIDENCE/x301-basepoint-select.asm
 AFFINE_SELECT=$EVIDENCE/x301-affine-select.asm
 SUMMARY=$EVIDENCE/summary.txt
 PUBLIC_CALLS=$EVIDENCE/x301-public-from-secret-calls.txt
+PUBLIC_MAP_CALLS=$EVIDENCE/x301-public-map-calls.txt
 /usr/bin/objdump -d -C --no-show-raw-insn --disassemble-zeroes --wide \
     "$MODULE" >"$DUMP"
 /usr/bin/nm -C --defined-only "$MODULE" >"$EVIDENCE/provider.nm"
@@ -342,12 +344,46 @@ affine_add_calls=$(/usr/bin/grep -Fxc \
     'ed301_eddsa::edwards::EdwardsPoint::add_affine' "$PUBLIC_CALLS")
 double_calls=$(/usr/bin/grep -Fxc \
     'ed301_eddsa::edwards::EdwardsPoint::double' "$PUBLIC_CALLS")
-invert_calls=$(/usr/bin/grep -Fxc \
-    'ed301_eddsa::field_5x64::Fe301::invert' "$PUBLIC_CALLS")
+invert_calls=$(/usr/bin/awk '
+    $0 == "ed301_eddsa::field_5x64::Fe301::invert" { count++ }
+    END { print count + 0 }
+' "$PUBLIC_CALLS")
+map_calls=$(/usr/bin/awk '
+    $0 == "ed301_eddsa::edwards::EdwardsPoint::montgomery_u_public_artifact" {
+        count++
+    }
+    END { print count + 0 }
+' "$PUBLIC_CALLS")
 test "$base_select_calls" -eq 2
 test "$affine_add_calls" -eq 2
 test "$double_calls" -eq 4
-test "$invert_calls" -eq 1
+case "$invert_calls:$map_calls" in
+    1:0)
+        ;;
+    0:1)
+        extract_symbol \
+            'ed301_eddsa::edwards::EdwardsPoint::montgomery_u_public_artifact' \
+            "$PUBLIC_MAP"
+        if /usr/bin/awk '
+            /^[[:space:]]*[[:xdigit:]]+:/ &&
+                    ($2 ~ /^loop/ || $2 ~ /^div/ || $2 ~ /^idiv/ ||
+                     $2 == "ud2" || $2 == "int3") { print; bad = 1 }
+            END { exit bad ? 0 : 1 }
+        ' "$PUBLIC_MAP"; then
+            echo "forbidden instruction in X301 public mapping" >&2
+            exit 1
+        fi
+        extract_call_targets "$PUBLIC_MAP" "$PUBLIC_MAP_CALLS"
+        test "$(/usr/bin/awk '
+            $0 == "ed301_eddsa::field_5x64::Fe301::invert" { count++ }
+            END { print count + 0 }
+        ' "$PUBLIC_MAP_CALLS")" -eq 1
+        ;;
+    *)
+        echo "unexpected X301 public-key inversion closure" >&2
+        exit 1
+        ;;
+esac
 
 # Both mixed-add loops are controlled by the same public bound (74 decimal).
 # Secret digits are read with those public loop indices and passed by value to
@@ -362,7 +398,7 @@ test "$(/usr/bin/grep -c 'cmp[[:space:]]\+\$0x4a,' "$PUBLIC")" -eq 2
 ' "$PUBLIC" >"$EVIDENCE/x301-public-from-secret-indexed-memory.txt"
 
 printf 'PASS x301_keygen=fixed-base base_select_sites=%s affine_add_sites=%s double_sites=%s inversion_sites=%s\n' \
-    "$base_select_calls" "$affine_add_calls" "$double_calls" "$invert_calls" \
+    "$base_select_calls" "$affine_add_calls" "$double_calls" 1 \
     | tee -a "$SUMMARY"
 
 # Checker negative control: a synthetic conditional edge must be rejected.

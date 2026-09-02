@@ -14,6 +14,15 @@ use ed301_eddsa::x301::{
 };
 use zeroize::Zeroize;
 
+#[cfg(feature = "secret-taint-instrumentation")]
+fn taint_secret(value: &mut [u8]) {
+    ed301_valgrind_client::mark_undefined(value);
+}
+
+#[cfg(not(feature = "secret-taint-instrumentation"))]
+#[inline(always)]
+fn taint_secret(_value: &mut [u8]) {}
+
 /// Function table consumed by the C provider shim.
 #[repr(C)]
 pub(crate) struct X301RustApi {
@@ -295,6 +304,7 @@ unsafe extern "C" fn key_generate(
         if unsafe { fill_random(callback_context, secret.0.as_mut_ptr(), SECRET_BYTES) } != 1 {
             return core::ptr::null_mut();
         }
+        taint_secret(&mut secret.0);
         let Ok(public) = public_from_secret(&secret.0) else {
             return core::ptr::null_mut();
         };
@@ -564,7 +574,17 @@ unsafe extern "C" fn cleanse(buffer: *mut u8, length: usize) {
 }
 
 fn bytes_equal<const N: usize>(left: &[u8; N], right: &[u8; N]) -> bool {
-    left.ct_eq(right).to_bool()
+    let equal = left.ct_eq(right).to_bool();
+    #[cfg(feature = "secret-taint-instrumentation")]
+    {
+        let mut public_equal = equal;
+        ed301_valgrind_client::make_defined(&mut public_equal);
+        public_equal
+    }
+    #[cfg(not(feature = "secret-taint-instrumentation"))]
+    {
+        equal
+    }
 }
 
 unsafe fn read_optional_public(
@@ -594,6 +614,7 @@ unsafe fn read_optional_secret(input: *const u8, input_len: usize) -> Option<Opt
     // SAFETY: The caller guarantees `input_len` readable bytes. The first
     // Rust-owned copy is already protected by `SecretBytes::drop`.
     unsafe { core::ptr::copy_nonoverlapping(input, output.0.as_mut_ptr(), SECRET_BYTES) };
+    taint_secret(&mut output.0);
     Some(Some(output))
 }
 

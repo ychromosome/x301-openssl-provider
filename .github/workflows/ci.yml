@@ -37,7 +37,7 @@ jobs:
           for tool in cargo rustc rustfmt cargo-fmt cargo-clippy rustdoc; do
             sudo ln -sf "$(rustup which "$tool")" "/usr/bin/$tool"
           done
-      - name: Verified core, differential and fuzz gates
+      - name: Source-checked core, differential and fuzz gates
         env:
           GLIBC_TUNABLES: ""
           LD_AUDIT: ""

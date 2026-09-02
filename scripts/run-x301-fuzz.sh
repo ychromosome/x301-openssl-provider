@@ -4,6 +4,7 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 RUNS=40000
+SEED=301
 
 sh "$ROOT_DIR/scripts/check-rust-build-environment.sh"
 sh "$ROOT_DIR/scripts/require-verified-snapshot.sh"
@@ -59,6 +60,7 @@ echo "cargo=$($CARGO --version)"
 echo "rustc=$($RUSTC --version)"
 echo "target=$HOST"
 echo "runs=$RUNS"
+echo "seed=$SEED"
 echo "corpus=$CORPUS_DIR"
 
 (
@@ -79,6 +81,7 @@ echo "corpus=$CORPUS_DIR"
 env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     "$TARGET_DIR/$HOST/release/x301_core" \
     -runs="$RUNS" \
+    -seed="$SEED" \
     -max_len=76 \
     -timeout=20 \
     -artifact_prefix="$ARTIFACT_DIR/" \

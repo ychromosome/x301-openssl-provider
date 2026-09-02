@@ -11,10 +11,11 @@
 
 use crypto_bigint::Choice;
 
+#[cfg(feature = "signature")]
+use crate::scalar::Scalar;
 use crate::{
     field_5x64::Fe301 as FieldElement,
     parameters::{FIELD_BITS, FIELD_BYTES},
-    scalar::Scalar,
     secret_taint::declassify,
 };
 
@@ -24,11 +25,16 @@ const BASEPOINT_TABLE_ROWS: usize = FIELD_BYTES;
 const BASEPOINT_TABLE_WIDTH: usize = 8;
 const BASEPOINT_TABLE_SIZE: usize = BASEPOINT_TABLE_ROWS * BASEPOINT_TABLE_WIDTH;
 const RADIX16_DIGITS: usize = FIELD_BYTES * 2;
+#[cfg(feature = "signature")]
 const BASEPOINT_WNAF_WIDTH: u32 = 8;
+#[cfg(feature = "signature")]
 const POINT_WNAF_WIDTH: u32 = 8;
+#[cfg(feature = "signature")]
 const BASEPOINT_ODD_MULTIPLES: usize = 1 << (BASEPOINT_WNAF_WIDTH - 2);
+#[cfg(feature = "signature")]
 const POINT_ODD_MULTIPLES: usize = 1 << (POINT_WNAF_WIDTH - 2);
 
+#[cfg(feature = "signature")]
 pub(crate) type VartimePointTable = [AffineNielsPoint; POINT_ODD_MULTIPLES];
 
 /// Canonical compressed encoding of the ED301-v1 base point.
@@ -50,6 +56,7 @@ const PRIME_ORDER_BYTES: [u8; FIELD_BYTES] = [
 // the point itself and then performs exactly 299 doublings and 17 signed
 // mixed additions from the shared odd-multiples table. The schedule is a
 // public constant and never depends on point data.
+#[cfg(feature = "signature")]
 const PRIME_ORDER_WNAF8_DESC: [(u16, i8); 18] = [
     (299, 1),
     (149, 1),
@@ -314,6 +321,7 @@ impl EdwardsPoint {
     }
 
     /// Multiply by a canonical scalar in exactly 301 rounds.
+    #[cfg(feature = "signature")]
     pub(crate) fn scalar_mul(self, scalar: &Scalar) -> Self {
         self.scalar_mul_with(|bit_index| scalar.bit(bit_index))
     }
@@ -339,6 +347,7 @@ impl EdwardsPoint {
     /// `[1..8] * [256^i]B`; odd digits are accumulated, shifted by four
     /// doublings, and followed by the even digits.  Every secret digit scans
     /// all eight entries and uses conditional selection.
+    #[cfg(feature = "signature")]
     pub(crate) fn scalar_mul_base(scalar: &Scalar) -> Self {
         let mut encoded = crate::secret::secret([0_u8; FIELD_BYTES]);
         scalar.write_canonical_bytes(&mut encoded);
@@ -392,6 +401,7 @@ impl EdwardsPoint {
     /// control flow is input-independent even though the point additions use
     /// the variable-time mixed-addition path. Callers must pass the table
     /// built from this same point.
+    #[cfg(feature = "signature")]
     pub(crate) fn is_prime_subgroup_with_table(&self, table: &VartimePointTable) -> Choice {
         let (leading_position, leading_digit) = PRIME_ORDER_WNAF8_DESC[0];
         debug_assert_eq!(leading_digit, 1);
@@ -442,6 +452,7 @@ impl EdwardsPoint {
     /// this follows the same separation used by Ed25519/Ed448 implementations:
     /// secret signing stays on the constant-time fixed-base path while public
     /// verification uses a Straus/wNAF multiscalar multiplication.
+    #[cfg(feature = "signature")]
     pub(crate) fn vartime_double_scalar_mul_basepoint(
         base_scalar: &Scalar,
         point_scalar: &Scalar,
@@ -473,6 +484,7 @@ impl EdwardsPoint {
     /// This table contains no secret material and its construction is
     /// deliberately variable-time.  A validated public key owns it so the
     /// per-signature path follows OpenSSL's prepared-key pattern.
+    #[cfg(feature = "signature")]
     pub(crate) fn prepare_vartime_table(self) -> VartimePointTable {
         build_vartime_odd_point_table(self)
     }
@@ -530,10 +542,18 @@ impl EdwardsPoint {
         let numerator = self.z.add(self.y);
         let denominator = self.z.sub(self.y);
         let inverse = denominator.invert();
-        debug_assert!(inverse.is_some().to_bool());
+        let mut inverse_is_some = inverse.is_some();
+        declassify(&mut inverse_is_some);
+        if !inverse_is_some.to_bool() {
+            return Err(EdwardsPointError);
+        }
 
         let coordinate = numerator.mul(inverse.to_inner_unchecked());
-        debug_assert!(!coordinate.is_zero().to_bool());
+        let mut coordinate_is_zero = coordinate.is_zero();
+        declassify(&mut coordinate_is_zero);
+        if coordinate_is_zero.to_bool() {
+            return Err(EdwardsPointError);
+        }
 
         let mut encoded = coordinate.to_canonical_bytes();
         declassify(&mut encoded);
@@ -700,6 +720,7 @@ const fn build_basepoint_table() -> [AffineNielsPoint; BASEPOINT_TABLE_SIZE] {
 
 static BASEPOINT_TABLE: [AffineNielsPoint; BASEPOINT_TABLE_SIZE] = build_basepoint_table();
 
+#[cfg(feature = "signature")]
 const fn build_basepoint_odd_table() -> [AffineNielsPoint; BASEPOINT_ODD_MULTIPLES] {
     let mut projective = [EdwardsPoint::IDENTITY; BASEPOINT_ODD_MULTIPLES];
     let step = EdwardsPoint::BASEPOINT.double_const();
@@ -712,9 +733,11 @@ const fn build_basepoint_odd_table() -> [AffineNielsPoint; BASEPOINT_ODD_MULTIPL
     batch_normalize_const(projective)
 }
 
+#[cfg(feature = "signature")]
 static BASEPOINT_ODD_TABLE: [AffineNielsPoint; BASEPOINT_ODD_MULTIPLES] =
     build_basepoint_odd_table();
 
+#[cfg(feature = "signature")]
 fn build_vartime_odd_point_table(point: EdwardsPoint) -> VartimePointTable {
     let mut projective = [EdwardsPoint::IDENTITY; POINT_ODD_MULTIPLES];
     let step = point.double();
@@ -823,7 +846,7 @@ fn select_basepoint(row: usize, digit: i8) -> AffineNielsPoint {
     AffineNielsPoint::conditional_select(selected, selected.negate(), negative)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "signature"))]
 mod tests {
     use super::*;
     use crate::test_support::{decode_hex_array, splitmix64};

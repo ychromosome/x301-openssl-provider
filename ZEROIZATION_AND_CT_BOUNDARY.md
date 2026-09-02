@@ -11,7 +11,9 @@ RAII owners clear these Ed301 values on return, error, and panic unwinding:
 X301 owners clear the raw scalar, ladder state, projective output, and returned
 38-byte shared secret. The provider clears its raw derive buffer, key-generation
 seed buffer, and the temporary 70-byte `ML-KEM-SS || X301-SS` value on every
-exit after creation.
+exit after creation. The provider contract has a separate Valgrind artifact
+that marks these shared-secret paths undefined before they cross the FFI
+boundary.
 
 These guarantees cover named source-level owners only. Rust and LLVM may copy
 field, scalar, point, stack, register, spill, or ABI values. The project makes

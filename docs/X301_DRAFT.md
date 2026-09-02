@@ -41,8 +41,9 @@ Provider modules accept the OpenSSL ABI major against which they were built
 (3 or 4); they do not impose a minor- or patch-version runtime check. The
 exact lanes above are reproducibility baselines, not an equality requirement.
 Hybrid operations additionally require a permitted `ML-KEM-1024`
-implementation to be available in the child context and fail without partial
-output if it is unavailable. Raw X301 does not have that feature dependency.
+implementation to be available in the child context. The hybrid artifact
+refuses provider initialization when the initial fetch fails. Raw X301 does
+not have that feature dependency.
 
 OpenSSL fetches the KEYMGMT and KEM named by a `TLS-GROUP` with `is-kem=1`.
 The adapter MUST therefore be EVP-fetchable. It defines no non-TLS KDF, OID,

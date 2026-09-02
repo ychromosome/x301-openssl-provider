@@ -9,11 +9,12 @@ extern crate std;
 use crypto_bigint::Choice;
 use std::{path::Path, process::Command, string::String, vec::Vec};
 
+#[cfg(feature = "signature")]
+use crate::scalar::Scalar;
 use crate::{
     edwards::{BASEPOINT_ENCODING, EdwardsPoint},
     field_5x64::{Fe301, Fe301Lazy},
     parameters::{EDWARDS_A, EDWARDS_D, FIELD_BYTES},
-    scalar::Scalar,
     test_support::{decode_hex_array, splitmix64},
     x301::{
         BASE_U_BYTES, PUBLIC_BYTES, SECRET_BYTES, SHARED_BYTES, X301_BYTES, X301Error,
@@ -79,6 +80,7 @@ fn sizes_and_fixed_rfc_style_kats_match_the_independent_oracle() {
 }
 
 #[test]
+#[cfg(feature = "signature")]
 fn k1_clamped_scalar_reduction_matches_the_independent_boundary_vectors() {
     let document: serde_json::Value = serde_json::from_str(include_str!(
         "../../../reference/x301/x301-perf-k1-seed.json"

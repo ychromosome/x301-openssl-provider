@@ -563,6 +563,33 @@ static int derive_exact(
     return result;
 }
 
+static int public_only_cross_libctx_export(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *private_key)
+{
+    OSSL_LIB_CTX *peer_libctx = OSSL_LIB_CTX_new();
+    OSSL_PROVIDER *peer_provider = peer_libctx == NULL
+        ? NULL : OSSL_PROVIDER_load(peer_libctx, X301_PROVIDER);
+    EVP_PKEY *peer = peer_provider == NULL
+        ? NULL : raw_public(peer_libctx, PUBLIC_B, sizeof(PUBLIC_B));
+    OSSL_PARAM *params = NULL;
+    unsigned char shared[X301_BYTES] = { 0 };
+    int result = peer != NULL
+        && EVP_PKEY_todata(peer, EVP_PKEY_KEYPAIR, &params) > 0
+        && OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PUB_KEY) != NULL
+        && OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_PRIV_KEY) == NULL
+        && derive_exact(libctx, private_key, peer, shared)
+        && CRYPTO_memcmp(shared, SHARED_AB, sizeof(shared)) == 0;
+
+    OPENSSL_cleanse(shared, sizeof(shared));
+    OSSL_PARAM_free(params);
+    EVP_PKEY_free(peer);
+    OSSL_PROVIDER_unload(peer_provider);
+    OSSL_LIB_CTX_free(peer_libctx);
+    ERR_clear_error();
+    return result;
+}
+
 static int derive_initialized(
     EVP_PKEY_CTX *context,
     unsigned char output[X301_BYTES])
@@ -1534,6 +1561,7 @@ static int panic_failpoints_are_atomic(
 int main(int argc, char **argv)
 {
     OSSL_LIB_CTX *libctx = NULL;
+    OSSL_PROVIDER *default_provider = NULL;
     OSSL_PROVIDER *rand_provider = NULL;
     OSSL_PROVIDER *x301_provider = NULL;
     EVP_KEYMGMT *keymgmt = NULL;
@@ -1559,13 +1587,15 @@ int main(int argc, char **argv)
     libctx = OSSL_LIB_CTX_new();
     if (libctx == NULL
             || OSSL_PROVIDER_set_default_search_path(libctx, argv[1]) <= 0
+            || (default_provider = OSSL_PROVIDER_load(
+                    libctx, "default")) == NULL
             || OSSL_PROVIDER_add_builtin(
                 libctx, TEST_RAND_PROVIDER, test_rand_provider_init) != 1
             || (rand_provider = OSSL_PROVIDER_load(
                     libctx, TEST_RAND_PROVIDER)) == NULL
-            || EVP_set_default_properties(libctx, TEST_RAND_PROPERTY) != 1
             || (x301_provider = OSSL_PROVIDER_load(
-                    libctx, X301_PROVIDER)) == NULL) {
+                    libctx, X301_PROVIDER)) == NULL
+            || EVP_set_default_properties(libctx, TEST_RAND_PROPERTY) != 1) {
         fail("load isolated RAND and X301 providers");
         goto done;
     }
@@ -1632,6 +1662,12 @@ int main(int argc, char **argv)
         goto done;
     }
     pass("T6 KEYMGMT match identifies equal and unequal keys");
+
+    if (!public_only_cross_libctx_export(libctx, private_a)) {
+        fail("T6 public-only KEYPAIR export supports cross-libctx peers");
+        goto done;
+    }
+    pass("T6 public-only KEYPAIR export supports cross-libctx peers");
 
     if (!alias_inputs_canonicalize_before_keymgmt_and_derive(
             libctx, private_a, public_a, public_b)) {
@@ -1759,6 +1795,7 @@ done:
     EVP_KEYMGMT_free(keymgmt);
     OSSL_PROVIDER_unload(x301_provider);
     OSSL_PROVIDER_unload(rand_provider);
+    OSSL_PROVIDER_unload(default_provider);
     OSSL_LIB_CTX_free(libctx);
     return success ? 0 : 1;
 }

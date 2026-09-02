@@ -17,6 +17,14 @@
 #include <openssl/evp.h>
 #include <openssl/params.h>
 #include "provider_internal.h"
+
+#if defined(X301_SECRET_TAINT_INSTRUMENTATION)
+extern void ed301_vg_make_mem_undefined(void *address, size_t length);
+# define X301_TAINT_SECRET(address, length) \
+    ed301_vg_make_mem_undefined((address), (length))
+#else
+# define X301_TAINT_SECRET(address, length) ((void)0)
+#endif
 #define X_BYTES ((size_t)38)
 #define ML_PUBLIC_BYTES ((size_t)1568)
 #define ML_CIPHERTEXT_BYTES ((size_t)1568)
@@ -556,6 +564,7 @@ static int hybrid_encapsulate(
     }
 
     memcpy(ciphertext, temporary_ciphertext, sizeof(temporary_ciphertext));
+    X301_TAINT_SECRET(temporary_secret, sizeof(temporary_secret));
     memcpy(shared_secret, temporary_secret, sizeof(temporary_secret));
     *ciphertext_length = sizeof(temporary_ciphertext);
     *shared_secret_length = sizeof(temporary_secret);
@@ -654,6 +663,7 @@ static int hybrid_decapsulate(
         goto cleanup;
     }
 
+    X301_TAINT_SECRET(temporary_secret, sizeof(temporary_secret));
     memcpy(shared_secret, temporary_secret, sizeof(temporary_secret));
     *shared_secret_length = sizeof(temporary_secret);
     result = 1;

@@ -114,6 +114,7 @@ fn main() {
     let archive = output_dir.join("libx301_provider_shim.a");
     let hybrid = env::var_os("CARGO_FEATURE_TLS_X301_MLKEM1024").is_some();
     let sanitizer = env::var_os("CARGO_FEATURE_TEST_SANITIZER").is_some();
+    let secret_taint = env::var_os("CARGO_FEATURE_SECRET_TAINT_INSTRUMENTATION").is_some();
     assert!(
         !(sanitizer && fuzz_coverage),
         "sanitizer and fuzz-coverage variants must remain separate"
@@ -148,6 +149,9 @@ fn main() {
     if hybrid {
         compiler.arg("-DX301_ENABLE_HYBRID_MLKEM1024=1");
     }
+    if secret_taint {
+        compiler.arg("-DX301_SECRET_TAINT_INSTRUMENTATION=1");
+    }
     assert!(
         compiler
             .status()
@@ -180,6 +184,9 @@ fn main() {
         }
         if fuzz_coverage {
             hybrid_compiler.arg("-fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp");
+        }
+        if secret_taint {
+            hybrid_compiler.arg("-DX301_SECRET_TAINT_INSTRUMENTATION=1");
         }
         assert!(
             hybrid_compiler

@@ -185,31 +185,44 @@ def digest(data: bytes) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] not in ("client", "server")):
+    if len(sys.argv) not in (2, 3) or (
+        len(sys.argv) == 3 and sys.argv[2] not in ("client", "server", "all-client")
+    ):
         print(
-            f"usage: {Path(sys.argv[0]).name} OPENSSL-MSG-FILE [client|server]",
+            f"usage: {Path(sys.argv[0]).name} "
+            "OPENSSL-MSG-FILE [client|server|all-client]",
             file=sys.stderr,
         )
         return 2
     direction = sys.argv[2] if len(sys.argv) == 3 else "client"
     try:
         trace = Path(sys.argv[1]).read_text(encoding="ascii")
-        if direction == "client":
-            key_share = x301_hybrid_keyshare(first_outgoing_client_hello(trace))
+        if direction == "all-client":
+            key_shares = [
+                x301_hybrid_keyshare(message)
+                for message in outgoing_client_hellos(trace)
+            ]
+            if not key_shares:
+                raise ParseError("no outgoing ClientHello in OpenSSL -msg output")
+        elif direction == "client":
+            key_shares = [x301_hybrid_keyshare(first_outgoing_client_hello(trace))]
         else:
-            key_share = x301_hybrid_server_keyshare(first_incoming_server_hello(trace))
+            key_shares = [x301_hybrid_server_keyshare(first_incoming_server_hello(trace))]
     except (OSError, UnicodeError, ParseError) as error:
         print(f"keyshare parse failed: {error}", file=sys.stderr)
         return 1
 
-    mlkem = key_share[:MLKEM_PUBLIC_BYTES]
-    x301 = key_share[MLKEM_PUBLIC_BYTES:]
-    print(
-        f"direction={direction} group=0x{GROUP_ID:04x} length={len(key_share)} "
-        f"mlkem_length={len(mlkem)} mlkem_sha256={digest(mlkem)} "
-        f"x301_length={len(x301)} x301_unused_bits=0x{x301[-1] & 0xe0:02x} "
-        f"x301_sha256={digest(x301)}"
-    )
+    for index, key_share in enumerate(key_shares):
+        mlkem = key_share[:MLKEM_PUBLIC_BYTES]
+        x301 = key_share[MLKEM_PUBLIC_BYTES:]
+        print(
+            f"connection={index} direction={direction} "
+            f"group=0x{GROUP_ID:04x} length={len(key_share)} "
+            f"mlkem_length={len(mlkem)} mlkem_sha256={digest(mlkem)} "
+            f"x301_length={len(x301)} "
+            f"x301_unused_bits=0x{x301[-1] & 0xe0:02x} "
+            f"x301_sha256={digest(x301)}"
+        )
     return 0
 
 

@@ -11,17 +11,17 @@ python3 -I -B -O reference/x301/test_x301_reference.py
 
 scripts/run-authoritative-gate.sh archive SOURCE_MANIFEST_SHA256 \
   test-x301-provider-contracts \
-  OPENSSL_3_5_7_ROOT OPENSSL_3_5_7_EVIDENCE_SHA256 \
-  OPENSSL_4_0_1_ROOT OPENSSL_4_0_1_EVIDENCE_SHA256
+    OPENSSL_3_5_8_ROOT OPENSSL_3_5_8_EVIDENCE_SHA256 \
+    OPENSSL_4_0_2_ROOT OPENSSL_4_0_2_EVIDENCE_SHA256
 
 scripts/run-authoritative-gate.sh archive SOURCE_MANIFEST_SHA256 test-x301-tls \
-  OPENSSL_3_5_7_ROOT OPENSSL_3_5_7_EVIDENCE_SHA256 \
-  OPENSSL_4_0_1_ROOT OPENSSL_4_0_1_EVIDENCE_SHA256
+  OPENSSL_3_5_8_ROOT OPENSSL_3_5_8_EVIDENCE_SHA256 \
+  OPENSSL_4_0_2_ROOT OPENSSL_4_0_2_EVIDENCE_SHA256
 
 scripts/run-authoritative-gate.sh archive SOURCE_MANIFEST_SHA256 \
   test-x301-tls --long-handshakes 1000 \
-  OPENSSL_3_5_7_ROOT OPENSSL_3_5_7_EVIDENCE_SHA256 \
-  OPENSSL_4_0_1_ROOT OPENSSL_4_0_1_EVIDENCE_SHA256
+  OPENSSL_3_5_8_ROOT OPENSSL_3_5_8_EVIDENCE_SHA256 \
+  OPENSSL_4_0_2_ROOT OPENSSL_4_0_2_EVIDENCE_SHA256
 ```
 
 `scripts/check.sh`, `scripts/check-secret-taint.sh`, and
@@ -52,15 +52,18 @@ basepoint equivalence, and DH commutativity.
 `provider-tests/x301/provider_x301_fuzz.c` covers raw KEYEXCH, hybrid parsing,
 output atomicity, and context duplication.
 
-The provider target and C boundary use sanitizer coverage, ASan, and UBSan on
-both OpenSSL lanes. Stable Rust is checked separately by Valgrind, secret
-taint, and final-binary disassembly. Corpora under `fuzz/corpus/` are tracked;
-crashes and evolving corpora remain outside the verified tree.
+The provider target uses a fixed seed and 20,000 mutations per OpenSSL lane.
+The C boundary also runs under ASan and UBSan. A separate Valgrind lane taints
+provider-owned X301 and hybrid shared-secret buffers. Corpora under
+`fuzz/corpus/` are tracked; crashes and evolving corpora remain outside the
+verified tree.
 
 TLS wire-state coverage-guided fuzzing and AArch64 runs remain open.
 
 ## Result identity
 
-A result MUST record the source-manifest digest, commit, toolchains, OpenSSL
-lane digests, module hashes, commands, and logs. Historical PASS logs or an
-unanchored worktree do not establish the current source.
+A result MUST record the source-manifest digest, toolchains, OpenSSL lane
+digests, module hashes, commands, and logs. Git-backed runs also record the
+commit; archive runs use the external manifest digest as their source
+identity. Historical PASS logs or an unanchored worktree do not establish the
+current source.

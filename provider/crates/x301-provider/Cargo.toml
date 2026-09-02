@@ -23,8 +23,13 @@ test-failpoint = []
 test-fuzz-coverage = []
 test-sanitizer = []
 tls-x301-mlkem1024 = []
+secret-taint-instrumentation = [
+    "ed301-eddsa/secret-taint-instrumentation",
+    "dep:ed301-valgrind-client",
+]
 
 [dependencies]
 crypto-bigint = { version = "=0.7.5", default-features = false }
-ed301-eddsa = { path = "../../../crates/ed301-eddsa", features = ["x301"] }
+ed301-eddsa = { path = "../../../crates/ed301-eddsa", default-features = false, features = ["x301"] }
+ed301-valgrind-client = { path = "../../../secret-taint/valgrind-client", optional = true }
 zeroize = { version = "=1.9.0", default-features = false }

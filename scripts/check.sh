@@ -43,6 +43,8 @@ env -i PATH=/usr/bin:/bin HOME="$HOME_DIR" LC_ALL=C \
     "$ROOT/performance/test_summarize.py"
 env PYTHONPYCACHEPREFIX="$WORK/pycache" /usr/bin/python3 -m py_compile \
     "$ROOT/performance/summarize_comparative.py"
+/usr/bin/python3 -I -B -O \
+    "$ROOT/reference/x301/test_x301_reference.py"
 /usr/bin/bash -n \
     "$ROOT/scripts/run-x301-benchmark-session.sh" \
     "$ROOT/scripts/run-x301-comparative-benchmark.sh"
@@ -54,6 +56,15 @@ clean_env /usr/bin/cargo-clippy --version
 
 cargo_clean metadata --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --format-version=1 >/dev/null
+cargo_clean check --manifest-path "$ROOT/Cargo.toml" \
+    --locked --offline --no-default-features --features x301
+if cargo_clean tree --manifest-path "$ROOT/provider/Cargo.toml" \
+        --locked --offline -p x301-provider \
+        --features tls-x301-mlkem1024 \
+        | grep -Eq '(^| )shake v'; then
+    echo "X301 provider dependency graph includes the signature hash stack" >&2
+    exit 1
+fi
 cargo_clean fmt --manifest-path "$ROOT/Cargo.toml" --all -- --check
 cargo_clean clippy --manifest-path "$ROOT/Cargo.toml" \
     --locked --offline --workspace --all-targets -- -D warnings

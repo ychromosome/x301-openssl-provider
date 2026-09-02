@@ -12,7 +12,7 @@ pub(crate) fn secret<T: Zeroize>(value: T) -> Secret<T> {
     Zeroizing::new(value)
 }
 
-#[cfg(all(test, panic = "unwind"))]
+#[cfg(all(test, panic = "unwind", feature = "signature"))]
 mod tests {
     extern crate std;
 

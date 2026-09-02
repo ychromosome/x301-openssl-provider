@@ -474,6 +474,62 @@ done:
     return result;
 }
 
+static int encapsulation_failure_is_atomic(
+    OSSL_LIB_CTX *libctx,
+    EVP_PKEY *public_key)
+{
+    EVP_PKEY_CTX *context = EVP_PKEY_CTX_new_from_pkey(
+        libctx, public_key, X301_PROPERTIES);
+    unsigned char ciphertext[HYBRID_CIPHERTEXT_BYTES + CANARY_BYTES];
+    unsigned char secret[HYBRID_SECRET_BYTES + CANARY_BYTES];
+    size_t ciphertext_length = HYBRID_CIPHERTEXT_BYTES;
+    size_t secret_length = HYBRID_SECRET_BYTES;
+    int result = 0;
+
+    memset(ciphertext, 0xa5, sizeof(ciphertext));
+    memset(secret, 0xa5, sizeof(secret));
+    ERR_clear_error();
+    if (context != NULL && EVP_PKEY_encapsulate_init(context, NULL) > 0
+            && EVP_PKEY_encapsulate(
+                context, ciphertext, &ciphertext_length,
+                secret, &secret_length) <= 0
+            && ERR_peek_error() != 0
+            && buffer_is(ciphertext, sizeof(ciphertext), 0xa5)
+            && buffer_is(secret, sizeof(secret), 0xa5))
+        result = 1;
+
+    ERR_clear_error();
+    OPENSSL_cleanse(secret, sizeof(secret));
+    EVP_PKEY_CTX_free(context);
+    return result;
+}
+
+static int low_order_client_shares_are_rejected(
+    OSSL_LIB_CTX *libctx,
+    const unsigned char valid[HYBRID_PUBLIC_BYTES])
+{
+    unsigned char candidate[HYBRID_PUBLIC_BYTES];
+    unsigned char low_order[3][X301_BYTES] = { { 0 }, { 0 }, { 0 } };
+    size_t index;
+
+    low_order[1][0] = 1;
+    memcpy(low_order[2], FIELD_MODULUS, X301_BYTES);
+    low_order[2][0]--;
+    for (index = 0; index < 3; index++) {
+        EVP_PKEY *key;
+
+        memcpy(candidate, valid, sizeof(candidate));
+        memcpy(candidate + MLKEM_PUBLIC_BYTES, low_order[index], X301_BYTES);
+        key = import_hybrid_public(libctx, candidate, sizeof(candidate));
+        if (key == NULL || !encapsulation_failure_is_atomic(libctx, key)) {
+            EVP_PKEY_free(key);
+            return 0;
+        }
+        EVP_PKEY_free(key);
+    }
+    return 1;
+}
+
 static int decapsulation_failure_is_atomic(
     OSSL_LIB_CTX *libctx,
     EVP_PKEY *private_key,
@@ -1030,11 +1086,6 @@ static int hybrid_fails_cleanly_without_mlkem(const char *module_directory)
     OSSL_LIB_CTX *libctx = NULL;
     OSSL_PROVIDER *null_provider = NULL;
     OSSL_PROVIDER *x301 = NULL;
-    EVP_KEYMGMT *hybrid_keymgmt = NULL;
-    EVP_PKEY *generated = NULL;
-    EVP_PKEY *empty = NULL;
-    unsigned char encoded[HYBRID_PUBLIC_BYTES] = { 0 };
-    unsigned char *unexpected = NULL;
     int result = 0;
 
     libctx = OSSL_LIB_CTX_new();
@@ -1042,34 +1093,15 @@ static int hybrid_fails_cleanly_without_mlkem(const char *module_directory)
             || OSSL_PROVIDER_set_default_search_path(
                 libctx, module_directory) <= 0
             || (null_provider = OSSL_PROVIDER_load(libctx, "null")) == NULL
-            || (x301 = OSSL_PROVIDER_load(libctx, X301_PROVIDER)) == NULL
             || OSSL_PROVIDER_available(libctx, DEFAULT_PROVIDER) != 0)
         goto done;
-    hybrid_keymgmt = EVP_KEYMGMT_fetch(
-        libctx, HYBRID_NAME, X301_PROPERTIES);
-    if (hybrid_keymgmt == NULL)
-        goto done;
+    x301 = OSSL_PROVIDER_load(libctx, X301_PROVIDER);
     ERR_clear_error();
-    generated = generate_hybrid(libctx);
-    ERR_clear_error();
-    empty = empty_hybrid(libctx);
-    if (generated != NULL || empty == NULL
-            || EVP_PKEY_set1_encoded_public_key(
-                empty, encoded, sizeof(encoded)) > 0)
-        goto done;
-    ERR_clear_error();
-    if (EVP_PKEY_get1_encoded_public_key(empty, &unexpected) != 0
-            || unexpected != NULL
-            || OSSL_PROVIDER_available(libctx, DEFAULT_PROVIDER) != 0)
-        goto done;
-    result = 1;
+    result = x301 == NULL
+        && OSSL_PROVIDER_available(libctx, DEFAULT_PROVIDER) == 0;
 
 done:
     ERR_clear_error();
-    OPENSSL_free(unexpected);
-    EVP_PKEY_free(empty);
-    EVP_PKEY_free(generated);
-    EVP_KEYMGMT_free(hybrid_keymgmt);
     OSSL_PROVIDER_unload(x301);
     OSSL_PROVIDER_unload(null_provider);
     OSSL_LIB_CTX_free(libctx);
@@ -1257,6 +1289,12 @@ int main(int argc, char **argv)
         goto done;
     }
     pass("H2 direct KEM roundtrip is exactly 1606/1606/70");
+
+    if (!low_order_client_shares_are_rejected(libctx, public_bytes)) {
+        fail("T9 low-order X301 client shares reject encapsulation atomically");
+        goto done;
+    }
+    pass("T9 low-order X301 client shares reject encapsulation atomically");
 
     if (!hybrid_aliases_canonicalize_before_storage_and_decapsulation(
             libctx, private_key, public_bytes, ciphertext,
