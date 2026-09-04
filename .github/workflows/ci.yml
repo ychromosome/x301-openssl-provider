@@ -140,6 +140,7 @@ jobs:
             "$work/lane-4.0.2/logs/4.0.2/evidence_manifest.sha256" \
             | awk '{ print $1 }')
           result_root="$PWD/provider-results"
+          mkdir "$result_root"
           prefix="$work/lane-3.5.8/inst/3.5.8"
           mkdir "$work/cargo-home" "$work/provider-target"
           env -i PATH=/usr/bin:/bin HOME="$work" LC_ALL=C \
