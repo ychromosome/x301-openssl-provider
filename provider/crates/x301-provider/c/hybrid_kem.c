@@ -88,12 +88,6 @@ static void hybrid_clear_free(
         provider->clear_free(pointer, size, __FILE__, __LINE__);
 }
 
-static void hybrid_thread_stop(X301_PROVIDER_CONTEXT *provider)
-{
-    if (provider != NULL && provider->libctx != NULL)
-        OPENSSL_thread_stop_ex(provider->libctx);
-}
-
 static int group_matches(const OSSL_PARAM params[])
 {
     const OSSL_PARAM *param;
@@ -135,7 +129,6 @@ static EVP_PKEY *mlkem_import_public(
 
 cleanup:
     EVP_PKEY_CTX_free(context);
-    hybrid_thread_stop(provider);
     return key;
 }
 
@@ -360,7 +353,6 @@ static void *hybrid_gen(
     } else {
         key->state = KEY_PRIVATE;
     }
-    hybrid_thread_stop(provider);
     return key;
 }
 
@@ -576,7 +568,6 @@ cleanup:
     context->provider->rust->key_free(server_x301);
     context->provider->rust->cleanse(
         temporary_secret, sizeof(temporary_secret));
-    hybrid_thread_stop(context->provider);
     return result;
 }
 
@@ -674,7 +665,6 @@ cleanup:
     context->provider->rust->key_free(peer_x301);
     context->provider->rust->cleanse(
         temporary_secret, sizeof(temporary_secret));
-    hybrid_thread_stop(context->provider);
     return result;
 }
 

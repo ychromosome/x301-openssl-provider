@@ -6,7 +6,8 @@
  * Contract sources:
  *   - docs/X301_DRAFT.md sections 7 and 12 (38-byte X301 inputs, XDH);
  *   - RFC 7748 sections 5-6 (raw XDH/derive API pattern);
- *   - OpenSSL provider-keymgmt(7), provider-keyexch(7), RAND_priv_bytes_ex(3);
+ *   - OpenSSL provider-keymgmt(7), provider-keyexch(7), EVP_RAND(3),
+ *     OPENSSL_thread_stop_ex(3);
  *   - OpenSSL ECX key-management tests for raw-key and RAND policy shape.
  *
  * Expected X301 bytes are frozen independent-reference vectors, not values
@@ -1558,6 +1559,237 @@ static int panic_failpoints_are_atomic(
     return 1;
 }
 
+/*
+ * T7 lifecycle: X301 key generation must not leave per-thread state on the
+ * provider's child OSSL_LIB_CTX.
+ *
+ * RAND_priv_bytes_ex() on a library context creates a per-thread DRBG and
+ * registers a thread-exit handler that dereferences that context; OpenSSL runs
+ * such handlers only for the calling thread when the context is freed
+ * (OPENSSL_init_crypto(3)).  A provider that drew X301 randomness that way
+ * would therefore leave every worker thread with a handler pointing at the
+ * freed child context once the provider is unloaded.  The workers below
+ * generate X301 keys, perform the application's own documented thread stop for
+ * the host context, and then outlive the provider and the host context.  The
+ * lane runs this harness under Valgrind: a provider with child-context thread
+ * state fails there with an invalid read at worker exit, the provider-owned
+ * DRBG passes.  Functionally the test also requires that concurrent workers
+ * obtain distinct, non-zero public keys.
+ */
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    unsigned int ready;
+    int release;
+} LIFECYCLE_GATE;
+
+typedef struct {
+    LIFECYCLE_GATE *gate;
+    OSSL_LIB_CTX *libctx;
+    unsigned char public_key[X301_BYTES];
+    int ok;
+} LIFECYCLE_WORKER;
+
+static void *lifecycle_worker(void *argument)
+{
+    LIFECYCLE_WORKER *worker = argument;
+    EVP_PKEY *key = keygen(worker->libctx);
+    size_t length = sizeof(worker->public_key);
+
+    worker->ok = key != NULL
+        && EVP_PKEY_get_raw_public_key(key, worker->public_key, &length) == 1
+        && length == X301_BYTES
+        && !buffer_is(worker->public_key, X301_BYTES, 0x00);
+    EVP_PKEY_free(key);
+
+    /* The application's documented duty for its own host context. */
+    OPENSSL_thread_stop_ex(worker->libctx);
+
+    pthread_mutex_lock(&worker->gate->mutex);
+    worker->gate->ready++;
+    pthread_cond_broadcast(&worker->gate->condition);
+    while (!worker->gate->release)
+        pthread_cond_wait(&worker->gate->condition, &worker->gate->mutex);
+    pthread_mutex_unlock(&worker->gate->mutex);
+    return NULL;
+}
+
+static int child_libctx_survives_teardown_before_worker_exit(
+    const char *module_directory)
+{
+    OSSL_LIB_CTX *libctx = NULL;
+    OSSL_PROVIDER *default_provider = NULL;
+    OSSL_PROVIDER *x301_provider = NULL;
+    LIFECYCLE_GATE gate;
+    LIFECYCLE_WORKER workers[4];
+    pthread_t threads[4];
+    size_t created = 0;
+    size_t index;
+    size_t other;
+    int mutex_ready = 0;
+    int condition_ready = 0;
+    int result = 0;
+
+    memset(&gate, 0, sizeof(gate));
+    memset(workers, 0, sizeof(workers));
+    libctx = OSSL_LIB_CTX_new();
+    if (libctx == NULL
+            || OSSL_PROVIDER_set_default_search_path(
+                libctx, module_directory) <= 0
+            || (default_provider = OSSL_PROVIDER_load(
+                    libctx, "default")) == NULL
+            || (x301_provider = OSSL_PROVIDER_load(
+                    libctx, X301_PROVIDER)) == NULL)
+        goto done;
+    mutex_ready = pthread_mutex_init(&gate.mutex, NULL) == 0;
+    condition_ready = mutex_ready
+        && pthread_cond_init(&gate.condition, NULL) == 0;
+    if (!condition_ready)
+        goto done;
+    for (index = 0; index < 4U; index++) {
+        workers[index].gate = &gate;
+        workers[index].libctx = libctx;
+        if (pthread_create(
+                &threads[index], NULL, lifecycle_worker,
+                &workers[index]) != 0)
+            break;
+        created++;
+    }
+    pthread_mutex_lock(&gate.mutex);
+    while (gate.ready < created)
+        pthread_cond_wait(&gate.condition, &gate.mutex);
+    pthread_mutex_unlock(&gate.mutex);
+
+    /* Provider, child context and host context go away first ... */
+    result = created == 4U
+        && OSSL_PROVIDER_unload(x301_provider) == 1;
+    x301_provider = NULL;
+    result = OSSL_PROVIDER_unload(default_provider) == 1 && result;
+    default_provider = NULL;
+    OSSL_LIB_CTX_free(libctx);
+    libctx = NULL;
+
+    /* ... and only then do the worker threads exit. */
+    pthread_mutex_lock(&gate.mutex);
+    gate.release = 1;
+    pthread_cond_broadcast(&gate.condition);
+    pthread_mutex_unlock(&gate.mutex);
+    for (index = 0; index < created; index++)
+        result = pthread_join(threads[index], NULL) == 0 && result;
+    created = 0;
+    if (!result)
+        goto done;
+    for (index = 0; index < 4U; index++) {
+        if (!workers[index].ok) {
+            result = 0;
+            goto done;
+        }
+        for (other = 0; other < index; other++) {
+            if (memcmp(workers[index].public_key, workers[other].public_key,
+                    X301_BYTES) == 0) {
+                result = 0;
+                goto done;
+            }
+        }
+    }
+
+done:
+    if (created > 0) {
+        pthread_mutex_lock(&gate.mutex);
+        gate.release = 1;
+        pthread_cond_broadcast(&gate.condition);
+        pthread_mutex_unlock(&gate.mutex);
+        for (index = 0; index < created; index++)
+            pthread_join(threads[index], NULL);
+    }
+    OSSL_PROVIDER_unload(x301_provider);
+    OSSL_PROVIDER_unload(default_provider);
+    OSSL_LIB_CTX_free(libctx);
+    if (condition_ready)
+        pthread_cond_destroy(&gate.condition);
+    if (mutex_ready)
+        pthread_mutex_destroy(&gate.mutex);
+    ERR_clear_error();
+    return result;
+}
+
+/*
+ * T7 policy: the provider DRBG is fetched under the child context's property
+ * policy.  With a policy that admits no DRBG implementation, key generation
+ * must fail closed with an error and without a key; once the policy admits
+ * one, generation recovers, consecutive keys differ, and a reloaded provider
+ * instance starts a fresh DRBG of its own.
+ */
+static int keygen_fails_closed_without_permitted_drbg(
+    const char *module_directory)
+{
+    OSSL_LIB_CTX *libctx = NULL;
+    OSSL_PROVIDER *default_provider = NULL;
+    OSSL_PROVIDER *x301_provider = NULL;
+    EVP_PKEY *first = NULL;
+    EVP_PKEY *second = NULL;
+    unsigned char first_public[X301_BYTES];
+    unsigned char second_public[X301_BYTES];
+    size_t length;
+    int result = 0;
+
+    libctx = OSSL_LIB_CTX_new();
+    if (libctx == NULL
+            || OSSL_PROVIDER_set_default_search_path(
+                libctx, module_directory) <= 0
+            || (default_provider = OSSL_PROVIDER_load(
+                    libctx, "default")) == NULL
+            || (x301_provider = OSSL_PROVIDER_load(
+                    libctx, X301_PROVIDER)) == NULL
+            || EVP_set_default_properties(libctx, X301_PROPERTIES) != 1)
+        goto done;
+    ERR_clear_error();
+    first = keygen(libctx);
+    if (first != NULL || ERR_peek_error() == 0)
+        goto done;
+    ERR_clear_error();
+
+    if (EVP_set_default_properties(libctx, "") != 1)
+        goto done;
+    first = keygen(libctx);
+    second = keygen(libctx);
+    length = sizeof(first_public);
+    if (first == NULL || second == NULL
+            || EVP_PKEY_get_raw_public_key(first, first_public, &length) != 1
+            || length != X301_BYTES)
+        goto done;
+    length = sizeof(second_public);
+    if (EVP_PKEY_get_raw_public_key(second, second_public, &length) != 1
+            || length != X301_BYTES
+            || memcmp(first_public, second_public, X301_BYTES) == 0)
+        goto done;
+    EVP_PKEY_free(first);
+    EVP_PKEY_free(second);
+    first = NULL;
+    second = NULL;
+
+    if (OSSL_PROVIDER_unload(x301_provider) != 1)
+        goto done;
+    x301_provider = OSSL_PROVIDER_load(libctx, X301_PROVIDER);
+    first = x301_provider == NULL ? NULL : keygen(libctx);
+    length = sizeof(second_public);
+    if (first == NULL
+            || EVP_PKEY_get_raw_public_key(first, second_public, &length) != 1
+            || length != X301_BYTES
+            || memcmp(first_public, second_public, X301_BYTES) == 0)
+        goto done;
+    result = 1;
+
+done:
+    ERR_clear_error();
+    EVP_PKEY_free(first);
+    EVP_PKEY_free(second);
+    OSSL_PROVIDER_unload(x301_provider);
+    OSSL_PROVIDER_unload(default_provider);
+    OSSL_LIB_CTX_free(libctx);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     OSSL_LIB_CTX *libctx = NULL;
@@ -1675,6 +1907,20 @@ int main(int argc, char **argv)
         goto done;
     }
     pass("D2 public aliases canonicalize before KEYMGMT and KEYEXCH");
+
+    if (!child_libctx_survives_teardown_before_worker_exit(argv[1])) {
+        fail("T7 X301 keygen leaves no child-LIBCTX thread state "
+            "(teardown before worker exit)");
+        goto done;
+    }
+    pass("T7 X301 keygen leaves no child-LIBCTX thread state "
+        "(teardown before worker exit)");
+
+    if (!keygen_fails_closed_without_permitted_drbg(argv[1])) {
+        fail("T7 keygen fails closed without a permitted DRBG and recovers");
+        goto done;
+    }
+    pass("T7 keygen fails closed without a permitted DRBG and recovers");
 
     calls_before = rand_generate_calls;
     generated = keygen(libctx);

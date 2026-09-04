@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- X301 key generation now draws from one provider-owned `CTR-DRBG` instance
+  (fetched under the child-context policy, seeded through the core entropy
+  upcall, locked) instead of `RAND_priv_bytes_ex()` on the child context, and
+  the per-operation `OPENSSL_thread_stop_ex(child)` calls are gone. No
+  per-thread state remains on the child context, so provider unload while
+  worker threads live needs no thread stop. X301 keygen throughput at 16
+  threads improves about 3.7x and the hybrid KEM round trip about 35%. New T7
+  lifecycle, DRBG-policy fail-closed and provider-reload tests.
 - X301 public inputs now require 38 bytes, clear bits 301-303, and subtract
   `p` once when necessary. Imports store and export the canonical coordinate.
   Post-ladder all-zero rejection is unchanged.

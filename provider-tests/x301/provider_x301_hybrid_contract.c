@@ -989,10 +989,10 @@ static void *hybrid_lifecycle_worker(void *argument)
     /*
      * OpenSSL's OSSL_LIB_CTX contract requires each application thread to
      * release thread-local state for the host context before another thread
-     * frees that context.  The provider can clean its own child context, but
-     * it neither owns nor can access this host context.  Doing the host-side
-     * cleanup here leaves Valgrind able to detect any stale child-context
-     * handler independently.
+     * frees that context.  The provider keeps no thread-local state on its
+     * own child context and neither owns nor can access this host context.
+     * Doing the host-side cleanup here leaves Valgrind able to detect any
+     * stale child-context handler independently.
      */
     OPENSSL_thread_stop_ex(worker->libctx);
 

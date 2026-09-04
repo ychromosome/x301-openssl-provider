@@ -1,7 +1,7 @@
 /*
  * Raw X301 OpenSSL provider adapter and optional TLS-GROUP registration.
  * Sources: OpenSSL provider(7), provider-keymgmt(7), provider-keyexch(7),
- * provider-base(7) "TLS-GROUP", RAND_priv_bytes_ex(3), RFC 7748's raw-DH
+ * provider-base(7) "TLS-GROUP", EVP_RAND(3), RFC 7748's raw-DH
  * provider shape, and RFC 9846's TLS 1.3 group contract. Raw X301 is
  * deliberately not registered as a TLS group.
  */
@@ -16,9 +16,9 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
+#include <openssl/evp.h>
 #include <openssl/opensslv.h>
 #include <openssl/params.h>
-#include <openssl/rand.h>
 
 #include "provider_internal.h"
 
@@ -642,21 +642,104 @@ static void *x301_key_gen_init(
     return generation;
 }
 
+/*
+ * Provider-owned DRBG.
+ *
+ * X301 key generation used to call RAND_priv_bytes_ex() on the child library
+ * context.  That creates a per-thread DRBG on the child context and registers
+ * a thread-exit handler that dereferences the child context; OpenSSL can only
+ * run such handlers on the calling thread when a context is freed, so every
+ * operation had to end with OPENSSL_thread_stop_ex(child), which rebuilt the
+ * DRBG on every call and serialised all threads on the primary DRBG lock.
+ *
+ * Instead the provider owns one DRBG instance, the way OpenSSL's own providers
+ * (including the FIPS module) seed their DRBGs: a "CTR-DRBG" fetched under the
+ * child context's provider and property policy, without a parent, so it is
+ * seeded through the core's get_user_entropy upcall from the application
+ * context's configured seed source, and locked for concurrent callers.  No
+ * per-thread state is created on the child context and no thread-stop is
+ * required.  The instance is created on first use so that it follows the
+ * property policy in force when key generation starts, as libcrypto's own
+ * primary DRBG does.
+ */
+static EVP_RAND_CTX *x301_drbg_new(OSSL_LIB_CTX *libctx)
+{
+    EVP_RAND *rand;
+    EVP_RAND_CTX *drbg;
+    OSSL_PARAM params[2];
+
+    rand = EVP_RAND_fetch(libctx, "CTR-DRBG", NULL);
+    if (rand == NULL)
+        return NULL;
+    drbg = EVP_RAND_CTX_new(rand, NULL);
+    EVP_RAND_free(rand);
+    if (drbg == NULL)
+        return NULL;
+    params[0] = OSSL_PARAM_construct_utf8_string(
+        OSSL_DRBG_PARAM_CIPHER, (char *)"AES-256-CTR", 0);
+    params[1] = OSSL_PARAM_construct_end();
+    if (!EVP_RAND_enable_locking(drbg)
+            || !EVP_RAND_instantiate(
+                drbg, X301_SECURITY_BITS, 0, NULL, 0, params)) {
+        EVP_RAND_CTX_free(drbg);
+        return NULL;
+    }
+    return drbg;
+}
+
+static void x301_drbg_free(EVP_RAND_CTX *drbg)
+{
+    if (drbg == NULL)
+        return;
+    (void)EVP_RAND_uninstantiate(drbg);
+    EVP_RAND_CTX_free(drbg);
+}
+
+static EVP_RAND_CTX *x301_drbg_get(X301_PROVIDER_CONTEXT *provider)
+{
+    EVP_RAND_CTX *drbg;
+
+    if (provider == NULL || provider->libctx == NULL
+            || provider->drbg_lock == NULL)
+        return NULL;
+    if (!CRYPTO_THREAD_read_lock(provider->drbg_lock))
+        return NULL;
+    drbg = provider->drbg;
+    CRYPTO_THREAD_unlock(provider->drbg_lock);
+    if (drbg != NULL)
+        return drbg;
+    if (!CRYPTO_THREAD_write_lock(provider->drbg_lock))
+        return NULL;
+    drbg = provider->drbg;
+    if (drbg == NULL) {
+        drbg = x301_drbg_new(provider->libctx);
+        provider->drbg = drbg;
+    }
+    CRYPTO_THREAD_unlock(provider->drbg_lock);
+    return drbg;
+}
+
 static int x301_fill_random(
     void *callback_context,
     unsigned char *output,
     size_t output_length)
 {
     X301_PROVIDER_CONTEXT *provider = callback_context;
+    EVP_RAND_CTX *drbg;
 
-    if (provider == NULL || provider->libctx == NULL || output == NULL
-            || output_length != X301_BYTES)
+    if (provider == NULL || output == NULL || output_length != X301_BYTES)
         return 0;
-    return RAND_priv_bytes_ex(
-        provider->libctx,
+    drbg = x301_drbg_get(provider);
+    if (drbg == NULL)
+        return 0;
+    return EVP_RAND_generate(
+        drbg,
         output,
         output_length,
-        X301_SECURITY_BITS) == 1;
+        X301_SECURITY_BITS,
+        0,
+        NULL,
+        0) == 1;
 }
 
 static void *x301_generate_raw_key_internal(X301_PROVIDER_CONTEXT *provider)
@@ -711,8 +794,6 @@ static void *x301_key_gen(
 cleanup:
     if (inner != NULL)
         provider->rust->key_free(inner);
-    /* Release this child-context RAND state on the thread that created it. */
-    OPENSSL_thread_stop_ex(provider->libctx);
     return key;
 }
 
@@ -1028,6 +1109,10 @@ static void x301_provider_teardown(void *provider_context)
 
     if (provider == NULL)
         return;
+    x301_drbg_free(provider->drbg);
+    provider->drbg = NULL;
+    CRYPTO_THREAD_lock_free(provider->drbg_lock);
+    provider->drbg_lock = NULL;
     OSSL_LIB_CTX_free(provider->libctx);
     provider->libctx = NULL;
     if (provider->clear_free != NULL)
@@ -1281,6 +1366,13 @@ int x301_shim_init(
         EVP_KEYMGMT_free(mlkem);
     }
 #endif
+
+    provider->drbg_lock = CRYPTO_THREAD_lock_new();
+    if (provider->drbg_lock == NULL) {
+        OSSL_LIB_CTX_free(provider->libctx);
+        clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
+        return 0;
+    }
 
     *provider_context = provider;
     *output_dispatch = X301_PROVIDER_DISPATCH;

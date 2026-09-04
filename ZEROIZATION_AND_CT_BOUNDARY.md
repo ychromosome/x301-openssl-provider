@@ -64,10 +64,18 @@ bytes.
 
 ## RAND and child contexts
 
-Provider key generation requests private RAND bytes through the child
-`OSSL_LIB_CTX`. A thread using that child RAND path calls
-`OPENSSL_thread_stop_ex()` before provider teardown. Cross-thread teardown
-tests keep workers alive while provider references are released.
+Provider key generation draws its 38 octets from a provider-owned DRBG: one
+`CTR-DRBG` instance fetched under the child `OSSL_LIB_CTX` provider and
+property policy, instantiated without a parent so that it is seeded through
+the core `get_user_entropy` upcall from the application context's seed source,
+and locked for concurrent callers. The provider never calls
+`RAND_priv_bytes_ex()` on the child context, so no per-thread DRBG and no
+thread-exit handler is created on the child context and no thread has to call
+`OPENSSL_thread_stop_ex()` for it. The instance is uninstantiated and freed in
+provider teardown before the child context. Cross-thread teardown tests in
+both harnesses keep workers alive across provider and host-context teardown;
+under Valgrind a provider with child-context thread state fails them with an
+invalid read at worker exit.
 
 ## Build boundary
 

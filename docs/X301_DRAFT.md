@@ -234,8 +234,10 @@ the OpenSSL provider contracts in both normative lanes. A length query with a
 NULL output buffer returns 38. Derivation without a peer, with a foreign key
 type, or with a 0/37/39-byte raw key fails without partial output.
 
-Key generation obtains 38 random octets through the same provider RAND route
-as existing key generation and then applies D3. Derivation is deterministic
+Key generation obtains 38 random octets from the provider-owned DRBG
+instance (one `CTR-DRBG` fetched under the child context's provider and
+property policy and seeded through the core entropy upcall) and then applies
+D3. Derivation is deterministic
 and MUST NOT consume RAND.
 
 RFC 9846 Section 4.3.8 forbids reusing a KeyShare value across connections.

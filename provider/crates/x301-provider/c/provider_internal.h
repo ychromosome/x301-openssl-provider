@@ -14,10 +14,9 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/crypto.h>
 
-#include "param_helpers.h"
-#if defined(X301_ENABLE_HYBRID_MLKEM1024)
 #include <openssl/evp.h>
-#endif
+
+#include "param_helpers.h"
 
 typedef struct x301_rust_api_st {
     uint32_t abi_version;
@@ -83,6 +82,9 @@ typedef struct x301_rust_api_st {
 typedef struct x301_provider_context_st {
     const OSSL_CORE_HANDLE *handle;
     OSSL_LIB_CTX *libctx;
+    /* Provider-owned DRBG, created lazily under drbg_lock; see x301_drbg_get. */
+    CRYPTO_RWLOCK *drbg_lock;
+    EVP_RAND_CTX *drbg;
     OSSL_FUNC_CRYPTO_zalloc_fn *zalloc;
     OSSL_FUNC_CRYPTO_clear_free_fn *clear_free;
     OSSL_FUNC_core_new_error_fn *new_error;
