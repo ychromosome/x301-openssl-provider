@@ -1,0 +1,27 @@
+format=x301-comparative-benchmark-v1
+timestamp_utc=2026-09-04T18:21:33Z
+lane=3.5.8
+repetitions=7
+cpu=2
+lane_evidence_sha256=5ea7be983ee95241b893375de349ba4dc519509b79d623c5a7f74ae1641062bd
+affinity=2
+cpu_model=AMD Ryzen 9 5950X 16-Core Processor
+kernel=Linux 7.2.2-300.fc43.x86_64 #1 SMP PREEMPT_DYNAMIC Sat Aug 29 17:49:21 UTC 2026 x86_64 GNU/Linux
+loadavg_start=2.03 1.00 0.53 4/3255 956841
+governor=powersave
+OpenSSL 3.5.8 25 Aug 2026 (Library: OpenSSL 3.5.8 25 Aug 2026)
+built on: Fri Sep  4 12:30:53 2026 UTC
+platform: linux-x86_64
+options:  bn(64,64)
+compiler: /usr/bin/gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG -DPURIFY
+OPENSSLDIR: "/tmp/ed301/lane3.vOYJUW/lane/inst/3.5.8/ssl"
+ENGINESDIR: "/tmp/ed301/lane3.vOYJUW/lane/inst/3.5.8/lib/engines-3"
+MODULESDIR: "/tmp/ed301/lane3.vOYJUW/lane/inst/3.5.8/lib/ossl-modules"
+Seeding source: os-specific
+CPUINFO: OPENSSL_ia32cap=0x7ef8320b078bffff:0x0040069c219c95a9:0x0000000000000000:0x0000000000000000:0x0000000000000000
+cc (GCC) 15.3.1 20260722 (Red Hat 15.3.1-1)
+Copyright (C) 2025 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+loadavg_end=2.68 1.24 0.62 3/3255 958029

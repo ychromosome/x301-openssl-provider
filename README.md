@@ -45,6 +45,28 @@ OpenSSL deviations are in `docs/X301_CONSTRUCTION_REGISTER.md` and
 Modules accept the OpenSSL ABI major used at build time: 3 or 4. The tested
 reference lanes are 3.5.8 and 4.0.2.
 
+## Performance
+
+Median time in microseconds on a Ryzen 9 5950X, pinned to one CPU, seven
+samples, OpenSSL 3.5.8:
+
+| Operation | X25519 | X301 | X448 |
+| --- | ---: | ---: | ---: |
+| Key generation | 23.72 | 29.44 | 144.29 |
+| First derive | 23.64 | 59.60 | 119.20 |
+| Cold derive, including setup | 24.82 | 61.36 | 120.37 |
+
+| Operation | X25519MLKEM768 | X301MLKEM1024 | X448MLKEM1024 |
+| --- | ---: | ---: | ---: |
+| Key generation | 50.06 | 67.86 | 183.81 |
+| Encapsulate | 63.99 | 108.57 | 285.56 |
+| Decapsulate | 48.46 | 89.96 | 151.84 |
+
+The X25519 hybrid uses ML-KEM-768; the X301 and X448 hybrids use ML-KEM-1024.
+Results are machine-specific. Method and receipt:
+`docs/PERFORMANCE_MEASUREMENT.md` and
+`performance/receipts/2026-09-04-ryzen5950x-openssl-3.5.8/`.
+
 ## Verification
 
 Authoritative gates require a caller-authenticated, read-only snapshot:
