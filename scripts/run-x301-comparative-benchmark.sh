@@ -29,6 +29,7 @@ esac
 if [[ ${X301_COMPARATIVE_PINNED:-0} != 1 ]]; then
     exec env X301_COMPARATIVE_PINNED=1 taskset -c "$CPU" "$0" "$@"
 fi
+unset X301_COMPARATIVE_PINNED
 
 "$ROOT/scripts/verify-openssl-provider-lane.sh" \
     "$LANE_ROOT" "$LANE" "$LANE_EVIDENCE_SHA256"
