@@ -9,12 +9,37 @@ The source is not approved for production use. NamedGroup `0xFE2E` is
 test-only and is not an IANA allocation. Remaining gates are listed in
 `STATUS.md`.
 
+## Curve
+
+X301 uses the Montgomery model birationally equivalent to Ed301:
+
+```text
+B*v^2 = u^3 + A*u^2 + u  over F_p,
+p = 2^301 - 2^99 + 947,
+A = 2*(a+d)/(a-d),  B = 4/(a-d),
+a = 2086388329,  d = 301.
+```
+
+The Edwards-to-Montgomery map uses `u=(1+y)/(1-y)`. The canonical Montgomery
+base coordinate is:
+
+```text
+5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308
+```
+
+The curve and twist have cofactors 4 and respective 300- and 299-bit prime
+factors; the generic negation-optimized Pollard-rho work factor is about
+`2^149.3`. X301 follows the RFC 7748 ladder pattern but is not an RFC 7748 or
+IANA-standardized algorithm. Exact constants are in `docs/X301_DRAFT.md`.
+
 ## Contracts
 
 X301 private keys, public keys, and shared secrets are 38 bytes. External
 public inputs clear bits 301-303 and reduce once modulo
 `p = 2^301 - 2^99 + 947`. Stored and exported public keys are canonical.
 Derivation rejects an all-zero result.
+
+Private scalars clear bits 0-1 and 301-303 and set bit 300.
 
 Ed301 and X301 use separate key types and keys. X301 reuses the safe-Rust
 5x64 field backend derived from the Ed301 curve work, but this repository
