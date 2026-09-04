@@ -44,23 +44,15 @@ target, profile, inlining, or arithmetic change MUST rerun those gates.
 The final-binary policy has separate x86-64 and AArch64 rules. Timing receipts
 remain machine-specific; cache evidence remains open.
 
-## Provider FFI and shared state
+## Provider FFI and ownership
 
-Provider keys and contexts share immutable expanded-signing and
-prepared-verification objects through a fallibly allocated atomic owner.
-Public-only objects cannot retain the signing scalar or nonce prefix. The last
-reference runs the existing secret destructors.
+Raw X301 keys and exchange contexts own separate zeroizing private-scalar
+copies. Public-only keys contain no private scalar. Duplication clones these
+owners; exchange reinitialization replaces the private copy and clears the peer.
 
-Raw pointers, allocation, and explicit `Send`/`Sync` implementations remain
-inside the provider FFI boundary. Reference increments are relaxed; decrements
-are release operations followed by an acquire fence before final destruction.
-Reference-count overflow aborts. This boundary requires allocation-failure,
-duplicate/free, concurrency, load/unload, and Valgrind tests.
-
-The ordinary signing provider follows the EdDSA signing path without a second
-verification. Feature `sign-self-verify` adds that fault check. The selected
-build MUST be recorded because the feature changes fault detection, not wire
-bytes.
+Hybrid keys own an X301 key and an OpenSSL `EVP_PKEY` for ML-KEM. Hybrid KEM
+contexts borrow that key; OpenSSL MUST keep it alive for the operation.
+The provider build disables Ed301 signature features.
 
 ## RAND and child contexts
 
