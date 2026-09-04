@@ -14,9 +14,9 @@ The direct dependencies declare:
 
 `provider-tests/x301/third_party/dudect/dudect.h` is dudect by Oscar Reparaz
 (MIT, https://github.com/oreparaz/dudect, commit
-`dc269651fb2567e46755cfb2a13d3875592968b5`); its license file and provenance
-sit beside it. It is compiled only into the test-only timing harness and is
-not part of any provider module or package.
+`dc269651fb2567e46755cfb2a13d3875592968b5`); its adjacent provenance records
+the test-only AArch64 timer adaptation. It is compiled only into the timing
+harness and is not part of any provider module or package.
 
 Transitive packages retain their own notices and terms. The project license
 does not relicense third-party code, standards or imported provenance inputs.

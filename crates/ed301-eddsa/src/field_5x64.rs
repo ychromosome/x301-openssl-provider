@@ -330,8 +330,9 @@ impl Default for Fe301 {
 }
 
 impl Fe301Lazy {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "x301"))]
     pub(crate) const ZERO: Self = Self([0; LIMBS]);
+    #[cfg(feature = "x301")]
     pub(crate) const ONE: Self = Self([1, 0, 0, 0, 0]);
 
     pub(crate) const fn from_fe301(value: Fe301) -> Self {
@@ -378,21 +379,25 @@ impl Fe301Lazy {
         Self(reduce_small_product(multiply_five_by_u32(self.0, value)))
     }
 
+    #[cfg(feature = "x301")]
     pub(crate) fn invert(self) -> CtOption<Self> {
         let canonical = Fe301(conditional_subtract_modulus_ct(self.0));
         let inverse = canonical.invert();
         CtOption::new(Self(inverse.to_inner_unchecked().0), inverse.is_some())
     }
 
+    #[cfg(feature = "x301")]
     pub(crate) fn is_zero(&self) -> Choice {
         Fe301(conditional_subtract_modulus_ct(self.0)).is_zero()
     }
 
+    #[cfg(feature = "x301")]
     pub(crate) fn to_canonical_bytes(self) -> [u8; FIELD_BYTES] {
         Fe301(conditional_subtract_modulus_ct(self.0)).to_canonical_bytes()
     }
 
     #[inline(always)]
+    #[cfg(feature = "x301")]
     pub(crate) fn conditional_swap(left: &mut Self, right: &mut Self, choice: Choice) {
         let original_left = left.0;
         let original_right = right.0;
@@ -422,6 +427,7 @@ impl Fe301LazyLinear {
 
     /// Multiply by a public 32-bit constant.
     #[inline(always)]
+    #[cfg(feature = "x301")]
     pub(crate) fn mul_small(self, value: u32) -> Fe301Lazy {
         Fe301Lazy(reduce_small_product(multiply_five_by_u32(self.0, value)))
     }

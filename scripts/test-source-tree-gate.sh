@@ -262,9 +262,9 @@ awk '
             exit 1
         count++
     }
-    END { if (count != 5) exit 1 }
+    END { if (count != 7) exit 1 }
 ' "$ROOT/.github/workflows/ci.yml" || {
-    echo "CI actions are not pinned to five exact commits" >&2
+    echo "CI actions are not pinned to seven exact commits" >&2
     exit 1
 }
 grep -Fqx '          toolchain: 1.98.0' \

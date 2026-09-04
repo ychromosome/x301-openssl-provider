@@ -12,7 +12,7 @@ Before a candidate freeze, the final source bytes still require:
 
 - complete core, provider, TLS, taint, codegen, and benchmark reruns;
 - coverage-guided TLS wire-state fuzzing;
-- final-binary constant-time review on x86-64 and AArch64;
+- final-binary receipts on x86-64 and AArch64 for the freeze revision;
 - independent implementation and interoperability; and
 - identifier, standardization, and release-governance decisions.
 

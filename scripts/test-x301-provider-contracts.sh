@@ -68,6 +68,7 @@ record_run_identity() {
         find Cargo.toml Cargo.lock \
             crates/ed301-eddsa/Cargo.toml crates/ed301-eddsa/src \
             docs/X301_DRAFT.md docs/X301_CONSTRUCTION_REGISTER.md \
+            docs/ED301_ARITHMETIC_PROVENANCE.md \
             docs/X301_EXTENDED_ASSURANCE.md \
             docs/OPENSSL_PATTERN_DEVIATIONS.md docs/OID_REGISTRY.md \
             fuzz/Cargo.toml fuzz/Cargo.lock fuzz/fuzz_targets fuzz/corpus \
@@ -75,7 +76,10 @@ record_run_identity() {
             provider/crates/x301-provider provider-tests/x301 reference/x301 \
             secret-taint/Cargo.toml secret-taint/src \
             scripts/check.sh scripts/check-secret-taint.sh \
-            scripts/check-x301-final-codegen.sh scripts/check-x301-long.sh \
+            scripts/check-ed301-arithmetic-provenance.py \
+            scripts/check-x301-final-codegen.sh \
+            scripts/check-x301-final-codegen-aarch64.sh \
+            scripts/check-x301-long.sh \
             scripts/materialize-openssl-provider-lane.sh \
             scripts/resolve-rust-tool.sh \
             scripts/run-authoritative-gate.sh \
@@ -182,6 +186,8 @@ run_lane() {
                 -p x301-provider --features tls-x301-mlkem1024
     )
     cp "$target/release/libx301.so" "$modules/x301.so"
+    "$ROOT/scripts/check-x301-final-codegen.sh" \
+        "$modules/x301.so" "$build/final-codegen"
 
     # M6 uses a separately copied, test-only Rust failpoint artifact.  The
     # ordinary module must remain byte-free of the environment-hook names.
@@ -494,10 +500,11 @@ run_lane() {
             provider-fuzz-corpus.sha256 \
             inputs/openssl-evp-pkey.txt \
             inputs/openssl-evp-x301.txt \
-            inputs/openssl-evp-x301.cnf >SHA256SUMS
+            inputs/openssl-evp-x301.cnf \
+            final-codegen/SHA256SUMS >SHA256SUMS
         sha256sum --strict --quiet -c SHA256SUMS
     )
-    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS t6=PASS t7=PASS t9=PASS t10=PASS nested_properties=PASS m1_m6=PASS m5_valgrind=PASS provider_taint=PASS f1_f4=PASS h04_libfuzzer=PASS\n' \
+    printf 'PASS lane=%s lane_evidence_sha256=%s o1=PASS o2=PASS t6=PASS t7=PASS t9=PASS t10=PASS nested_properties=PASS m1_m6=PASS m5_valgrind=PASS provider_taint=PASS codegen=PASS f1_f4=PASS h04_libfuzzer=PASS\n' \
         "$lane" "$lane_evidence" \
         | tee "$build/STATUS.txt"
 }

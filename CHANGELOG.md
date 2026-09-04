@@ -5,6 +5,8 @@
 - Ported the pinned Ed301 lazy runtime Edwards formulas into X301's existing
   field superset. Added independent `[0,4p)` tests, exact shared-function
   provenance and final-DSO checks for the changed fixed-base operations.
+- The timing harness now rejects failures from every test. Separate AArch64
+  timing and final-codegen paths cover the ladder and fixed-base operations.
 - Added the dudect timing lane (`scripts/check-x301-timing.sh`,
   `provider-tests/x301/provider_x301_timing.c`, vendored
   `provider-tests/x301/third_party/dudect`): fixed-vs-random timing tests on

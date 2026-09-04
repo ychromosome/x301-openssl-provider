@@ -41,8 +41,8 @@ Source structure is not a constant-time proof. Secret-taint and disassembly
 gates bind one compiler, architecture, profile, and final binary. A compiler,
 target, profile, inlining, or arithmetic change MUST rerun those gates.
 
-The current final-binary policy is defined for x86-64. AArch64 disassembly,
-timing, and cache evidence remains open.
+The final-binary policy has separate x86-64 and AArch64 rules. Timing receipts
+remain machine-specific; cache evidence remains open.
 
 ## Provider FFI and shared state
 
@@ -87,7 +87,7 @@ The top-level release profile MUST keep Ed301 overflow checks enabled,
 transitive. Every consuming product MUST repeat the override and inspect its
 own final binary.
 
-Open work: exact-revision full-source security review, AArch64 timing, taint
-and codegen runs (the x86-64 dudect timing lane, `scripts/check-x301-timing.sh`,
-is machine-bound evidence, not a review), cache-timing tests, fault injection,
-and a decision on stricter non-`Copy` secret arithmetic. Production keys MUST NOT be used before those gates close.
+Open work: exact-revision full-source security review, cache-timing tests,
+fault injection, and a decision on stricter non-`Copy` secret arithmetic.
+Timing remains machine-bound evidence, not a proof. Production keys MUST NOT
+be used before those gates close.

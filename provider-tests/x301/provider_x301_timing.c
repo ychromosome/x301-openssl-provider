@@ -314,6 +314,8 @@ int main(int argc, char **argv)
     size_t total = 100000;
     dudect_state_t states[TEST_COUNT];
     double max_t[TEST_COUNT];
+    size_t prepare_failure_counts[TEST_COUNT] = { 0 };
+    size_t operation_failure_counts[TEST_COUNT] = { 0 };
     int test, gating_leak = 0, status = 2;
 
     if (argc < 2 || argc > 3) {
@@ -356,11 +358,21 @@ int main(int argc, char **argv)
 
     printf("x301_timing_tool=dudect measurements_per_test=%zu "
         "leak_threshold_abs_t=%d\n", total, t_threshold_moderate);
-    for (test = 0; test < TEST_COUNT; test++)
+    for (test = 0; test < TEST_COUNT; test++) {
         states[test] = run_test(test, total, &max_t[test]);
-    if (prepare_failures != 0) {
-        fprintf(stderr, "x301_timing=ERROR input preparation failed\n");
-        goto done;
+        prepare_failure_counts[test] = prepare_failures;
+        operation_failure_counts[test] = operation_failures;
+    }
+    for (test = 0; test < TEST_COUNT; test++) {
+        if (prepare_failure_counts[test] != 0
+                || operation_failure_counts[test] != 0) {
+            fprintf(stderr,
+                "x301_timing=ERROR test=%s prepare_failures=%zu "
+                "operation_failures=%zu\n",
+                TEST_LABELS[test], prepare_failure_counts[test],
+                operation_failure_counts[test]);
+            goto done;
+        }
     }
     if (states[TEST_POSITIVE_CONTROL] != DUDECT_LEAKAGE_FOUND) {
         printf("x301_timing=INCONCLUSIVE positive_control_max_t=%.2f\n",

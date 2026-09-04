@@ -85,11 +85,10 @@ scripts/run-authoritative-gate.sh archive <trusted-sha256> \
 
 Default 200,000 measurements per test. The evidence directory records the
 module, libcrypto and harness digests, CPU model and flags, kernel, governor
-and load. A pass is evidence for the recorded machine and input classes; it is
-not a constant-time proof, does not cover AArch64, and does not replace the
-secret-taint lane (secret-dependent addresses and branches) or the codegen
-gate (machine-code shape). The lane is not part of CI because shared runners
-cannot give a stable timing baseline.
+and load. x86-64 uses `RDTSC`; AArch64 uses `CLOCK_MONOTONIC_RAW`. Every test
+must complete without preparation or operation failure. A pass applies only
+to the recorded machine and input classes and does not replace taint or
+machine-code checks.
 
 ## Result identity
 

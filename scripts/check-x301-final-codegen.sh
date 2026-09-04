@@ -22,7 +22,7 @@ fi
 MODULE=$1
 EVIDENCE=$2
 
-for tool in /usr/bin/awk /usr/bin/cp /usr/bin/find /usr/bin/gawk \
+for tool in /usr/bin/awk /usr/bin/cp /usr/bin/find \
         /usr/bin/grep /usr/bin/mkdir /usr/bin/nm /usr/bin/objdump \
         /usr/bin/readelf /usr/bin/sha256sum /usr/bin/sort /usr/bin/xargs; do
     test -x "$tool" || {
@@ -33,6 +33,15 @@ done
 test -f "$MODULE" && test ! -L "$MODULE" || {
     echo "module must be a regular non-symlink file" >&2
     exit 2
+}
+if /usr/bin/readelf -h "$MODULE" \
+        | /usr/bin/grep -Eq 'Machine:[[:space:]]+AArch64$'; then
+    exec "$ROOT/scripts/check-x301-final-codegen-aarch64.sh" \
+        "$MODULE" "$EVIDENCE"
+fi
+test -x /usr/bin/gawk || {
+    echo "missing codegen tool: /usr/bin/gawk" >&2
+    exit 127
 }
 test ! -e "$EVIDENCE" || {
     echo "evidence directory already exists: $EVIDENCE" >&2
@@ -63,6 +72,8 @@ PUBLIC=$EVIDENCE/x301-public-from-secret.asm
 PUBLIC_MAP=$EVIDENCE/x301-public-map.asm
 BASE_SELECT=$EVIDENCE/x301-basepoint-select.asm
 AFFINE_SELECT=$EVIDENCE/x301-affine-select.asm
+POINT_AFFINE_ADD=$EVIDENCE/x301-point-add-affine.asm
+POINT_DOUBLE=$EVIDENCE/x301-point-double.asm
 SUMMARY=$EVIDENCE/summary.txt
 PUBLIC_CALLS=$EVIDENCE/x301-public-from-secret-calls.txt
 PUBLIC_MAP_CALLS=$EVIDENCE/x301-public-map-calls.txt
@@ -311,6 +322,12 @@ extract_symbol 'ed301_eddsa::edwards::select_basepoint' "$BASE_SELECT"
 extract_symbol \
     'ed301_eddsa::edwards::AffineNielsPoint::conditional_select' \
     "$AFFINE_SELECT"
+extract_symbol \
+    'ed301_eddsa::edwards::EdwardsPoint::add_affine' \
+    "$POINT_AFFINE_ADD"
+extract_symbol \
+    'ed301_eddsa::edwards::EdwardsPoint::double' \
+    "$POINT_DOUBLE"
 
 for section in "$BASE_SELECT" "$AFFINE_SELECT"; do
     if forbidden_straight_line "$section"; then
@@ -319,13 +336,54 @@ for section in "$BASE_SELECT" "$AFFINE_SELECT"; do
     fi
     if /usr/bin/awk '
         /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
-                $2 !~ /^lea/ && $2 !~ /^nop/ { print; bad = 1 }
+                $2 !~ /^lea/ && $0 !~ /[[:space:]]nop[a-z]*[[:space:]]/ {
+            print
+            bad = 1
+        }
         END { exit bad ? 0 : 1 }
     ' "$section"; then
         echo "fixed-base selector contains indexed memory" >&2
         exit 1
     fi
 done
+
+for section in "$POINT_AFFINE_ADD" "$POINT_DOUBLE"; do
+    if forbidden_straight_line "$section"; then
+        echo "fixed-base Edwards arithmetic contains conditional control flow" >&2
+        exit 1
+    fi
+    if /usr/bin/awk '
+        /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^call/ { print; bad = 1 }
+        END { exit bad ? 0 : 1 }
+    ' "$section"; then
+        echo "fixed-base Edwards arithmetic contains a call" >&2
+        exit 1
+    fi
+    if /usr/bin/awk '
+        /^[[:space:]]*[[:xdigit:]]+:/ && $0 ~ /\([^)]*,[^)]*\)/ &&
+                $2 !~ /^lea/ && $0 !~ /[[:space:]]nop[a-z]*[[:space:]]/ {
+            print
+            bad = 1
+        }
+        END { exit bad ? 0 : 1 }
+    ' "$section"; then
+        echo "fixed-base Edwards arithmetic contains indexed memory" >&2
+        exit 1
+    fi
+done
+
+affine_cmov=$(/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^cmov/ { count++ }
+    END { print count + 0 }
+' "$POINT_AFFINE_ADD")
+double_cmov=$(/usr/bin/awk '
+    /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^cmov/ { count++ }
+    END { print count + 0 }
+' "$POINT_DOUBLE")
+test "$affine_cmov" -eq 30
+test "$double_cmov" -eq 40
+printf 'PASS x301_fixed_base_edwards add_affine_cmov=%s double_cmov=%s branch_free=1 indexed_memory=0 calls=0\n' \
+    "$affine_cmov" "$double_cmov" | tee -a "$SUMMARY"
 
 if /usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ &&

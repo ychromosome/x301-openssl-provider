@@ -71,8 +71,15 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
+#if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h>
 #include <x86intrin.h>
+#elif defined(__aarch64__)
+#include <stdatomic.h>
+#include <time.h>
+#else
+#error "dudect timing is supported only on x86-64 and AArch64"
+#endif
 
 #ifdef DUDECT_VISIBLITY_STATIC
 #define DUDECT_VISIBILITY static
@@ -279,8 +286,16 @@ uint8_t randombit(void) {
  Also see https://stackoverflow.com/a/12634857
 */
 static inline int64_t cpucycles(void) {
+#if defined(__x86_64__) || defined(_M_X64)
   _mm_mfence();
   return (int64_t)__rdtsc();
+#else
+  struct timespec now;
+  atomic_signal_fence(memory_order_seq_cst);
+  assert(clock_gettime(CLOCK_MONOTONIC_RAW, &now) == 0);
+  atomic_signal_fence(memory_order_seq_cst);
+  return (int64_t)now.tv_sec * INT64_C(1000000000) + now.tv_nsec;
+#endif
 }
 
 // threshold values for Welch's t-test
