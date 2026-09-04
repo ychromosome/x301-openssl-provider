@@ -16,9 +16,12 @@
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/opensslv.h>
 #include <openssl/params.h>
+#include <openssl/provider.h>
+#include <openssl/rand.h>
 
 #include "provider_internal.h"
 
@@ -652,26 +655,26 @@ static void *x301_key_gen_init(
  * operation had to end with OPENSSL_thread_stop_ex(child), which rebuilt the
  * DRBG on every call and serialised all threads on the primary DRBG lock.
  *
- * Instead the provider owns one DRBG instance, the way OpenSSL's own providers
- * (including the FIPS module) seed their DRBGs: a "CTR-DRBG" fetched under the
- * child context's provider and property policy, without a parent, so it is
- * seeded through the core's get_user_entropy upcall from the application
- * context's configured seed source, and locked for concurrent callers.  No
- * per-thread state is created on the child context and no thread-stop is
- * required.  The instance is created on first use so that it follows the
- * property policy in force when key generation starts, as libcrypto's own
- * primary DRBG does.
+ * Instead the provider owns one locked CTR-DRBG whose seed parent is the
+ * child library context's primary DRBG.  The primary uses that context's seed
+ * source; application rand.seed and seed_strict settings are not inherited by
+ * a child context.  No per-thread state is created on the child context and no
+ * thread-stop is required.  The instance is created on first use.
  */
 static EVP_RAND_CTX *x301_drbg_new(OSSL_LIB_CTX *libctx)
 {
     EVP_RAND *rand;
     EVP_RAND_CTX *drbg;
+    EVP_RAND_CTX *parent;
     OSSL_PARAM params[2];
 
+    parent = RAND_get0_primary(libctx);
+    if (parent == NULL)
+        return NULL;
     rand = EVP_RAND_fetch(libctx, "CTR-DRBG", NULL);
     if (rand == NULL)
         return NULL;
-    drbg = EVP_RAND_CTX_new(rand, NULL);
+    drbg = EVP_RAND_CTX_new(rand, parent);
     EVP_RAND_free(rand);
     if (drbg == NULL)
         return NULL;
@@ -1062,6 +1065,8 @@ static int x301_provider_get_capabilities(
     OSSL_CALLBACK *callback,
     void *callback_argument)
 {
+    X301_PROVIDER_CONTEXT *provider = provider_context;
+    EVP_KEYMGMT *mlkem;
     int minimum_tls = X301_TLS_VERSION_1_3;
     int maximum_tls = X301_TLS_VERSION_1_3;
     int minimum_dtls = -1;
@@ -1094,11 +1099,16 @@ static int x301_provider_get_capabilities(
         OSSL_PARAM_END
     };
 
-    (void)provider_context;
-    if (capability == NULL || callback == NULL)
+    if (provider == NULL || capability == NULL || callback == NULL)
         return 0;
     if (strcmp(capability, X301_TLS_GROUP_CAPABILITY) != 0)
         return 0;
+    (void)ERR_set_mark();
+    mlkem = EVP_KEYMGMT_fetch(provider->libctx, "ML-KEM-1024", NULL);
+    (void)ERR_pop_to_mark();
+    if (mlkem == NULL)
+        return 1;
+    EVP_KEYMGMT_free(mlkem);
     return callback(hybrid_group_parameters, callback_argument);
 }
 #endif
@@ -1355,15 +1365,15 @@ int x301_shim_init(
     }
 #if defined(X301_ENABLE_HYBRID_MLKEM1024)
     {
-        EVP_KEYMGMT *mlkem = EVP_KEYMGMT_fetch(
-            provider->libctx, "ML-KEM-1024", NULL);
+        OSSL_PROVIDER *null_provider;
 
-        if (mlkem == NULL) {
+        null_provider = OSSL_PROVIDER_load(provider->libctx, "null");
+        if (null_provider == NULL
+                || OSSL_PROVIDER_unload(null_provider) != 1) {
             OSSL_LIB_CTX_free(provider->libctx);
             clear_free(provider, sizeof(*provider), __FILE__, __LINE__);
             return 0;
         }
-        EVP_KEYMGMT_free(mlkem);
     }
 #endif
 

@@ -234,11 +234,16 @@ the OpenSSL provider contracts in both normative lanes. A length query with a
 NULL output buffer returns 38. Derivation without a peer, with a foreign key
 type, or with a 0/37/39-byte raw key fails without partial output.
 
-Key generation obtains 38 random octets from the provider-owned DRBG
-instance (one `CTR-DRBG` fetched under the child context's provider and
-property policy and seeded through the core entropy upcall) and then applies
-D3. Derivation is deterministic
-and MUST NOT consume RAND.
+Key generation obtains 38 random octets from one locked provider-owned
+`CTR-DRBG`, seeded by the child library context's primary DRBG, and then
+applies D3. The primary uses the child context's operating-system seed source;
+application `rand.seed` and `seed_strict` settings are not inherited.
+Derivation is deterministic and MUST NOT consume RAND.
+
+The hybrid provider does not auto-load a child-local fallback provider. The
+application library context MUST expose an allowed ML-KEM-1024 implementation
+before hybrid discovery or use. Otherwise raw X301 remains available, the
+hybrid group is not advertised, and hybrid operations fail.
 
 RFC 9846 Section 4.3.8 forbids reusing a KeyShare value across connections.
 Every TLS connection, including one that performs session resumption with an

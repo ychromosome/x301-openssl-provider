@@ -2,18 +2,13 @@
 
 ## Unreleased
 
-- X301 key generation now draws from one provider-owned `CTR-DRBG` instance
-  (fetched under the child-context policy, seeded through the core entropy
-  upcall, locked) instead of `RAND_priv_bytes_ex()` on the child context, and
-  the per-operation `OPENSSL_thread_stop_ex(child)` calls are gone. No
-  per-thread state remains on the child context, so provider unload while
-  worker threads live needs no thread stop. X301 keygen throughput at 16
-  threads improves about 3.7x and the hybrid KEM round trip about 35%. This
-  is registered as exception X-RAND-INSTANCE to construction rule E4. The
-  warm instance keeps the implementation selected at first key generation
-  across later property-policy changes, as libcrypto's own DRBGs do; only a
-  fresh library context re-evaluates the policy. New T7 lifecycle,
-  DRBG-policy fail-closed and warm-instance tests.
+- X301 key generation uses one locked provider-owned `CTR-DRBG`, seeded by
+  the child library context's primary DRBG. This removes per-operation
+  `OPENSSL_thread_stop_ex(child)` calls and child-context thread-local state.
+  The local instance and lifecycle remain registered as exception
+  X-RAND-INSTANCE to construction rule E4. The hybrid artifact disables
+  child-local provider fallback. Without application-context ML-KEM-1024,
+  raw X301 remains available and the hybrid group is not advertised.
 - X301 public inputs now require 38 bytes, clear bits 301-303, and subtract
   `p` once when necessary. Imports store and export the canonical coordinate.
   Post-ladder all-zero rejection is unchanged.

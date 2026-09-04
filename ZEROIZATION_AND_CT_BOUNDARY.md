@@ -64,18 +64,20 @@ bytes.
 
 ## RAND and child contexts
 
-Provider key generation draws its 38 octets from a provider-owned DRBG: one
-`CTR-DRBG` instance fetched under the child `OSSL_LIB_CTX` provider and
-property policy, instantiated without a parent so that it is seeded through
-the core `get_user_entropy` upcall from the application context's seed source,
-and locked for concurrent callers. The provider never calls
-`RAND_priv_bytes_ex()` on the child context, so no per-thread DRBG and no
-thread-exit handler is created on the child context and no thread has to call
-`OPENSSL_thread_stop_ex()` for it. The instance is uninstantiated and freed in
-provider teardown before the child context. Cross-thread teardown tests in
-both harnesses keep workers alive across provider and host-context teardown;
-under Valgrind a provider with child-context thread state fails them with an
-invalid read at worker exit.
+Provider key generation draws 38 octets from one locked provider-owned
+`CTR-DRBG`, seeded by `RAND_get0_primary(child)`. The primary uses the child
+context's seed source, which reads from the operating system; application
+`rand.seed` and `seed_strict` settings are not inherited by the child context.
+Instantiation fails if the selected DRBG cannot obtain entropy from that
+parent. No child-context thread-local DRBG or thread-exit handler is created.
+The instance is freed before the child context. Cross-thread teardown tests
+and their Valgrind negative control cover stale thread state.
+
+The hybrid provider disables child-local fallback before fetching ML-KEM.
+Without an allowed application-context ML-KEM-1024 implementation, raw X301
+remains available but no hybrid TLS group is advertised and hybrid operations
+fail. This prevents a child-local default provider from creating ML-KEM RAND
+thread state.
 
 ## Build boundary
 

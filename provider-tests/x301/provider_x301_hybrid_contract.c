@@ -1081,11 +1081,22 @@ done:
     return result;
 }
 
+static int count_group_capability(const OSSL_PARAM params[], void *argument)
+{
+    int *count = argument;
+
+    (void)params;
+    (*count)++;
+    return 1;
+}
+
 static int hybrid_fails_cleanly_without_mlkem(const char *module_directory)
 {
     OSSL_LIB_CTX *libctx = NULL;
     OSSL_PROVIDER *null_provider = NULL;
     OSSL_PROVIDER *x301 = NULL;
+    EVP_PKEY *generated = NULL;
+    int capability_count = 0;
     int result = 0;
 
     libctx = OSSL_LIB_CTX_new();
@@ -1096,14 +1107,61 @@ static int hybrid_fails_cleanly_without_mlkem(const char *module_directory)
             || OSSL_PROVIDER_available(libctx, DEFAULT_PROVIDER) != 0)
         goto done;
     x301 = OSSL_PROVIDER_load(libctx, X301_PROVIDER);
+    if (x301 == NULL
+            || OSSL_PROVIDER_get_capabilities(x301, "TLS-GROUP",
+                count_group_capability, &capability_count) != 1)
+        goto done;
     ERR_clear_error();
-    result = x301 == NULL
+    generated = generate_hybrid(libctx);
+    result = capability_count == 0 && generated == NULL
         && OSSL_PROVIDER_available(libctx, DEFAULT_PROVIDER) == 0;
 
 done:
     ERR_clear_error();
+    EVP_PKEY_free(generated);
     OSSL_PROVIDER_unload(x301);
     OSSL_PROVIDER_unload(null_provider);
+    OSSL_LIB_CTX_free(libctx);
+    return result;
+}
+
+static int hybrid_x301_first_load_is_raw_only(const char *module_directory)
+{
+    OSSL_LIB_CTX *libctx = NULL;
+    OSSL_PROVIDER *deflt = NULL;
+    OSSL_PROVIDER *x301 = NULL;
+    EVP_KEYMGMT *raw_keymgmt = NULL;
+    int capability_count = 0;
+    int result = 0;
+
+    libctx = OSSL_LIB_CTX_new();
+    if (libctx == NULL
+            || OSSL_PROVIDER_set_default_search_path(
+                libctx, module_directory) <= 0)
+        goto done;
+    x301 = OSSL_PROVIDER_load(libctx, X301_PROVIDER);
+    if (x301 == NULL)
+        goto done;
+    raw_keymgmt = EVP_KEYMGMT_fetch(libctx, X301_NAME, X301_PROPERTIES);
+    result = raw_keymgmt != NULL
+        && OSSL_PROVIDER_get_capabilities(x301, "TLS-GROUP",
+               count_group_capability, &capability_count) == 1
+        && capability_count == 0
+        && OSSL_PROVIDER_available(libctx, DEFAULT_PROVIDER) == 0;
+    if (result) {
+        deflt = OSSL_PROVIDER_load(libctx, DEFAULT_PROVIDER);
+        capability_count = 0;
+        result = deflt != NULL
+            && OSSL_PROVIDER_get_capabilities(x301, "TLS-GROUP",
+                   count_group_capability, &capability_count) == 1
+            && capability_count == 1;
+    }
+
+done:
+    ERR_clear_error();
+    EVP_KEYMGMT_free(raw_keymgmt);
+    OSSL_PROVIDER_unload(x301);
+    OSSL_PROVIDER_unload(deflt);
     OSSL_LIB_CTX_free(libctx);
     return result;
 }
@@ -1196,6 +1254,11 @@ int main(int argc, char **argv)
         fprintf(stderr, "cannot install X301 counting allocator\n");
         return 2;
     }
+    if (!hybrid_x301_first_load_is_raw_only(argv[1])) {
+        fail("X301-first load stays raw-only without child fallback");
+        goto done;
+    }
+    pass("X301-first load stays raw-only without child fallback");
     libctx = OSSL_LIB_CTX_new();
     if (libctx == NULL
             || OSSL_PROVIDER_set_default_search_path(libctx, argv[1]) <= 0
