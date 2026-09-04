@@ -104,9 +104,39 @@ count_symbol() {
     ' "$input"
 }
 
+trim_terminal_padding() {
+    input=$1
+    output=$2
+    /usr/bin/awk '
+        function flush_padding(    slot) {
+            for (slot = 1; slot <= padding_count; slot++)
+                print padding[slot]
+            delete padding
+            padding_count = 0
+        }
+        /^[[:space:]]*[[:xdigit:]]+:/ {
+            mnemonic = $2
+            if (mnemonic == "int3" ||
+                    $0 ~ /[[:space:]]nop[a-z]*[[:space:]]/) {
+                padding[++padding_count] = $0
+                next
+            }
+            if (padding_count != 0)
+                flush_padding()
+            last_mnemonic = mnemonic
+        }
+        { print }
+        END {
+            if (padding_count != 0 && last_mnemonic !~ /^retq?$/)
+                flush_padding()
+        }
+    ' "$input" >"$output"
+}
+
 extract_symbol() {
     symbol=$1
     output=$2
+    raw=$output.raw
     count=$(count_symbol "$DUMP" "$symbol")
     test "$count" -eq 1 || {
         printf 'expected one symbol %s, found %s\n' "$symbol" "$count" >&2
@@ -127,7 +157,8 @@ extract_symbol() {
             active = canonical(name) == symbol
         }
         active { print }
-    ' "$DUMP" >"$output"
+    ' "$DUMP" >"$raw"
+    trim_terminal_padding "$raw" "$output"
     test -s "$output"
 }
 
@@ -177,6 +208,24 @@ forbidden_straight_line() {
         END { exit bad ? 0 : 1 }
     ' "$1"
 }
+
+PADDING_OK_RAW=$EVIDENCE/terminal-padding-ok.raw
+PADDING_OK=$EVIDENCE/terminal-padding-ok.asm
+printf '0: ret\n1: int3\n2: int3\n' >"$PADDING_OK_RAW"
+trim_terminal_padding "$PADDING_OK_RAW" "$PADDING_OK"
+if /usr/bin/grep -q int3 "$PADDING_OK"; then
+    echo "terminal padding was not removed" >&2
+    exit 1
+fi
+PADDING_BAD_RAW=$EVIDENCE/terminal-padding-bad.raw
+PADDING_BAD=$EVIDENCE/terminal-padding-bad.asm
+printf '0: int3\n1: ret\n' >"$PADDING_BAD_RAW"
+trim_terminal_padding "$PADDING_BAD_RAW" "$PADDING_BAD"
+if ! forbidden_straight_line "$PADDING_BAD" >/dev/null; then
+    echo "internal trap padding was accepted" >&2
+    exit 1
+fi
+printf 'PASS terminal_padding=after-ret-only\n' | tee -a "$SUMMARY"
 
 extract_symbol 'ed301_eddsa::x301::x301' "$X301"
 extract_symbol 'ed301_eddsa::x301::ladder' "$LADDER"
