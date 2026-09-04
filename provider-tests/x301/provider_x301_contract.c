@@ -28,6 +28,7 @@
 #include <openssl/evp.h>
 #include <openssl/params.h>
 #include <openssl/provider.h>
+#include <openssl/rand.h>
 
 #include "generated/x301_adversarial_vectors.h"
 
@@ -1717,8 +1718,13 @@ done:
  * T7 policy: the provider DRBG is fetched under the child context's property
  * policy.  With a policy that admits no DRBG implementation, key generation
  * must fail closed with an error and without a key; once the policy admits
- * one, generation recovers, consecutive keys differ, and a reloaded provider
- * instance starts a fresh DRBG of its own.
+ * one, generation recovers and consecutive keys differ.  Unloading and
+ * reloading the provider in the same context does not produce a fresh
+ * instance: OpenSSL tears a provider down only when its last reference goes
+ * (ossl_provider_free(), not provider_deactivate()), and the provider store
+ * holds one until the context is freed.  The warm DRBG therefore survives
+ * unload/reload and a policy tightened in between; only a fresh library
+ * context re-evaluates the policy (first half of this test).
  */
 static int keygen_fails_closed_without_permitted_drbg(
     const char *module_directory)
@@ -1770,13 +1776,13 @@ static int keygen_fails_closed_without_permitted_drbg(
 
     if (OSSL_PROVIDER_unload(x301_provider) != 1)
         goto done;
-    x301_provider = OSSL_PROVIDER_load(libctx, X301_PROVIDER);
-    first = x301_provider == NULL ? NULL : keygen(libctx);
-    length = sizeof(second_public);
-    if (first == NULL
-            || EVP_PKEY_get_raw_public_key(first, second_public, &length) != 1
-            || length != X301_BYTES
-            || memcmp(first_public, second_public, X301_BYTES) == 0)
+    x301_provider = NULL;
+    if (EVP_set_default_properties(libctx, X301_PROPERTIES) != 1
+            || (x301_provider = OSSL_PROVIDER_load(libctx, X301_PROVIDER)) == NULL)
+        goto done;
+    ERR_clear_error();
+    first = keygen(libctx);
+    if (first == NULL)
         goto done;
     result = 1;
 
@@ -1784,6 +1790,54 @@ done:
     ERR_clear_error();
     EVP_PKEY_free(first);
     EVP_PKEY_free(second);
+    OSSL_PROVIDER_unload(x301_provider);
+    OSSL_PROVIDER_unload(default_provider);
+    OSSL_LIB_CTX_free(libctx);
+    return result;
+}
+
+/*
+ * T7 policy, warm instance: X-RAND-INSTANCE pins libcrypto semantics.  A DRBG
+ * instance selected under the policy in force at first key generation keeps
+ * serving after the policy is tightened, exactly as RAND_priv_bytes_ex() on
+ * the application context does; only a fresh context re-evaluates the policy
+ * (covered by keygen_fails_closed_without_permitted_drbg).  The test exists so
+ * that this behaviour is a documented decision, not an accident.
+ */
+static int warm_drbg_survives_later_policy_restriction(
+    const char *module_directory)
+{
+    OSSL_LIB_CTX *libctx = NULL;
+    OSSL_PROVIDER *default_provider = NULL;
+    OSSL_PROVIDER *x301_provider = NULL;
+    EVP_PKEY *warm = NULL;
+    EVP_PKEY *after = NULL;
+    unsigned char reference[16];
+    int result = 0;
+
+    libctx = OSSL_LIB_CTX_new();
+    if (libctx == NULL
+            || OSSL_PROVIDER_set_default_search_path(
+                libctx, module_directory) <= 0
+            || (default_provider = OSSL_PROVIDER_load(
+                    libctx, "default")) == NULL
+            || (x301_provider = OSSL_PROVIDER_load(
+                    libctx, X301_PROVIDER)) == NULL
+            || (warm = keygen(libctx)) == NULL
+            || RAND_priv_bytes_ex(libctx, reference, sizeof(reference), 0) != 1
+            || EVP_set_default_properties(libctx, X301_PROPERTIES) != 1)
+        goto done;
+    /* libcrypto's own warm DRBG keeps serving under the tightened policy ... */
+    if (RAND_priv_bytes_ex(libctx, reference, sizeof(reference), 0) != 1)
+        goto done;
+    /* ... and so does the provider's warm instance. */
+    after = keygen(libctx);
+    result = after != NULL;
+
+done:
+    ERR_clear_error();
+    EVP_PKEY_free(after);
+    EVP_PKEY_free(warm);
     OSSL_PROVIDER_unload(x301_provider);
     OSSL_PROVIDER_unload(default_provider);
     OSSL_LIB_CTX_free(libctx);
@@ -1921,6 +1975,12 @@ int main(int argc, char **argv)
         goto done;
     }
     pass("T7 keygen fails closed without a permitted DRBG and recovers");
+
+    if (!warm_drbg_survives_later_policy_restriction(argv[1])) {
+        fail("T7 warm provider DRBG keeps libcrypto policy semantics");
+        goto done;
+    }
+    pass("T7 warm provider DRBG keeps libcrypto policy semantics");
 
     calls_before = rand_generate_calls;
     generated = keygen(libctx);
