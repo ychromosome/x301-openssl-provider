@@ -77,6 +77,14 @@ case "$GATE" in
     check-x301-final-codegen)
         TARGET=$ROOT/scripts/check-x301-final-codegen.sh
         ;;
+    check-x301-timing)
+        if [ "${1:-}" = --measurements ] && [ "$#" -ge 2 ]; then
+            X301_TIMING_MEASUREMENTS=$2
+            export X301_TIMING_MEASUREMENTS
+            shift 2
+        fi
+        TARGET=$ROOT/scripts/check-x301-timing.sh
+        ;;
     run-x301-fuzz)
         while [ "$#" -ge 2 ]; do
             case "$1" in

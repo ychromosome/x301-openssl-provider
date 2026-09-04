@@ -60,6 +60,37 @@ verified tree.
 
 TLS wire-state coverage-guided fuzzing and AArch64 runs remain open.
 
+## Timing lane
+
+`scripts/check-x301-timing.sh` measures the final provider module with the
+vendored dudect tool (`provider-tests/x301/third_party/dudect`, MIT; Reparaz,
+Balasch, Verbauwhede, DATE 2017). The harness only supplies dudect's two
+callbacks; measurement loop, Welch t-tests on raw, percentile-cropped and
+second-order data, and the verdict (|t| > 10) are dudect's.
+
+| Test | Timed EVP operation | Fixed class | Random class | Gating |
+| --- | --- | --- | --- | --- |
+| T1 | `EVP_PKEY_derive` | fixed local secret, fixed peer | random local secret | yes |
+| T2 | `EVP_PKEY_derive` | fixed peer u | random peer u | yes |
+| T3 | raw private import (fixed-base public derivation) | fixed secret | random secret | yes |
+| T4 | hybrid `EVP_PKEY_decapsulate` | one valid ciphertext | fresh valid ciphertexts | yes |
+| T5 | hybrid `EVP_PKEY_decapsulate` | valid ciphertext | one corrupted ML-KEM byte | informative; FIPS 203 implicit rejection is OpenSSL-owned |
+| P0 | secret-dependent loop | all-zero | random | positive control; must be detected or the run is inconclusive |
+
+```sh
+scripts/run-authoritative-gate.sh archive <trusted-sha256> \
+  check-x301-timing --measurements 1000000 \
+  <openssl-prefix> <provider-modules-dir> <new-evidence-dir>
+```
+
+Default 200,000 measurements per test. The evidence directory records the
+module, libcrypto and harness digests, CPU model and flags, kernel, governor
+and load. A pass is evidence for the recorded machine and input classes; it is
+not a constant-time proof, does not cover AArch64, and does not replace the
+secret-taint lane (secret-dependent addresses and branches) or the codegen
+gate (machine-code shape). The lane is not part of CI because shared runners
+cannot give a stable timing baseline.
+
 ## Result identity
 
 A result MUST record the source-manifest digest, toolchains, OpenSSL lane

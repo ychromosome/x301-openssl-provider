@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added the dudect timing lane (`scripts/check-x301-timing.sh`,
+  `provider-tests/x301/provider_x301_timing.c`, vendored
+  `provider-tests/x301/third_party/dudect`): fixed-vs-random timing tests on
+  the final module for derive (secret and peer), raw private import and hybrid
+  decapsulation, with a positive control. Evidence for the recorded machine,
+  not a constant-time proof.
 - X301 key generation uses one locked provider-owned `CTR-DRBG`, seeded by
   the child library context's primary DRBG. This removes per-operation
   `OPENSSL_thread_stop_ex(child)` calls and child-context thread-local state.

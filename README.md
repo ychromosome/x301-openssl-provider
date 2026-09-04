@@ -72,6 +72,8 @@ scripts/run-authoritative-gate.sh archive <trusted-sha256> test-x301-tls \
 ```
 
 `scripts/check-x301-long.sh` runs the million-iteration vector.
+`scripts/check-x301-timing.sh` runs the dudect timing lane against a built
+module (`docs/X301_EXTENDED_ASSURANCE.md`).
 `docs/PERFORMANCE_MEASUREMENT.md` defines benchmark provenance.
 
 ## Source map
