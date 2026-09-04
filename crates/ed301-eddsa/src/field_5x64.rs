@@ -30,7 +30,6 @@ const MODULUS: [u64; LIMBS] = [
 
 // 2p in little-endian radix 2^64. X301 keeps reduced ladder values below
 // this bound and uses it as the fixed subtraction offset.
-#[cfg(feature = "x301")]
 const MODULUS_TIMES_TWO: [u64; LIMBS] = [
     0x0000_0000_0000_0766,
     0xffff_fff0_0000_0000,
@@ -63,7 +62,6 @@ const SQRT_RATIO_EXPONENT: [u64; LIMBS] = [
 pub(crate) struct Fe301([u64; LIMBS]);
 
 /// Reduced X301 ladder value in `[0, 2p)`.
-#[cfg(feature = "x301")]
 #[derive(Clone, Copy)]
 pub(crate) struct Fe301Lazy([u64; LIMBS]);
 
@@ -71,7 +69,6 @@ pub(crate) struct Fe301Lazy([u64; LIMBS]);
 ///
 /// It has no encoding or comparison API and is consumed immediately by a
 /// multiplication or square.
-#[cfg(feature = "x301")]
 #[derive(Clone, Copy)]
 pub(crate) struct Fe301LazyLinear([u64; LIMBS]);
 
@@ -332,7 +329,6 @@ impl Default for Fe301 {
     }
 }
 
-#[cfg(feature = "x301")]
 impl Fe301Lazy {
     #[cfg(test)]
     pub(crate) const ZERO: Self = Self([0; LIMBS]);
@@ -340,6 +336,11 @@ impl Fe301Lazy {
 
     pub(crate) const fn from_fe301(value: Fe301) -> Self {
         Self(value.0)
+    }
+
+    #[inline(always)]
+    pub(crate) fn canonical(self) -> Fe301 {
+        Fe301(conditional_subtract_modulus_ct(self.0))
     }
 
     /// Form a bounded sum without reducing it.
@@ -364,6 +365,11 @@ impl Fe301Lazy {
     #[inline(always)]
     pub(crate) fn mul(self, rhs: Self) -> Self {
         Self(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
+    }
+
+    #[inline(always)]
+    pub(crate) fn square(self) -> Self {
+        Self(reduce_wide_unreduced(square_wide(self.0)))
     }
 
     /// Multiply by a public 32-bit constant, retaining the `[0, 2p)` bound.
@@ -395,7 +401,6 @@ impl Fe301Lazy {
     }
 }
 
-#[cfg(feature = "x301")]
 impl Fe301LazyLinear {
     /// Multiply two values below `4p`, retaining a result below `2p`.
     #[inline(always)]
@@ -410,7 +415,6 @@ impl Fe301LazyLinear {
     }
 
     /// Multiply by a reduced ladder value.
-    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn mul_tight(self, rhs: Fe301Lazy) -> Fe301Lazy {
         Fe301Lazy(reduce_wide_unreduced(multiply_wide(self.0, rhs.0)))
@@ -420,6 +424,14 @@ impl Fe301LazyLinear {
     #[inline(always)]
     pub(crate) fn mul_small(self, value: u32) -> Fe301Lazy {
         Fe301Lazy(reduce_small_product(multiply_five_by_u32(self.0, value)))
+    }
+
+    #[inline(always)]
+    pub(crate) fn tighten(self) -> Fe301Lazy {
+        let (reduced, borrow) = subtract_limbs_runtime(self.0, MODULUS_TIMES_TWO);
+        let mut output = self.0;
+        output.ct_assign(&reduced, Choice::from_u8_lsb((borrow as u8) ^ 1));
+        Fe301Lazy(output)
     }
 }
 
@@ -549,6 +561,7 @@ const fn multiply_wide(left: [u64; LIMBS], right: [u64; LIMBS]) -> [u64; LIMBS *
     output
 }
 
+#[inline(always)]
 const fn multiply_five_by_u32(value: [u64; LIMBS], multiplier: u32) -> [u64; LIMBS + 1] {
     let mut output = [0_u64; LIMBS + 1];
     let mut carry = 0_u64;
@@ -812,57 +825,33 @@ mod tests {
         Fe301(conditional_subtract_modulus_const(words))
     }
 
-    /// Reduce an arbitrary wide value with the independent Montgomery oracle:
-    /// `value = low + high * 2^301` with both halves fed through the oracle.
+    /// Reduce an arbitrary 640-bit value by Horner evaluation in the
+    /// independent Montgomery field.
     fn oracle_reduce_wide(wide: [u64; LIMBS * 2]) -> [u8; FIELD_BYTES] {
-        fn oracle_from_limbs(limbs: [u64; LIMBS]) -> Oracle {
-            // A raw half is below 2^301 < 2p; one conditional subtraction of
-            // the long-standing helper canonicalizes it for the oracle.
-            let canonical = conditional_subtract_modulus_const(limbs);
-            let mut bytes = [0_u8; FIELD_BYTES];
-            let mut index = 0;
-            while index < FIELD_BYTES {
-                bytes[index] = (canonical[index / 8] >> ((index % 8) * 8)) as u8;
-                index += 1;
-            }
-            Oracle::from_canonical_bytes(&bytes).expect_copied("canonicalized halves are below p")
+        let mut radix_bytes = [0_u8; FIELD_BYTES];
+        radix_bytes[8] = 1;
+        let radix = Oracle::from_canonical_bytes(&radix_bytes).expect_copied("2^64 is canonical");
+        let mut value = Oracle::ZERO;
+        let mut index = LIMBS * 2;
+        while index != 0 {
+            index -= 1;
+            value = value.mul(radix).add(Oracle::from_u64(wide[index]));
         }
-        let low = [wide[0], wide[1], wide[2], wide[3], wide[4] & TOP_MASK];
-        let high = [
-            (wide[4] >> TOP_BITS) | (wide[5] << (64 - TOP_BITS)),
-            (wide[5] >> TOP_BITS) | (wide[6] << (64 - TOP_BITS)),
-            (wide[6] >> TOP_BITS) | (wide[7] << (64 - TOP_BITS)),
-            (wide[7] >> TOP_BITS) | (wide[8] << (64 - TOP_BITS)),
-            (wide[8] >> TOP_BITS) | (wide[9] << (64 - TOP_BITS)),
-        ];
-        // 2^301 mod p as a canonical oracle constant: 2^99 - 947.
-        let mut shift_bytes = [0_u8; FIELD_BYTES];
-        shift_bytes[0] = 0x4d;
-        shift_bytes[1] = 0xfc;
-        let mut index = 2;
-        while index < 12 {
-            shift_bytes[index] = 0xff;
-            index += 1;
-        }
-        shift_bytes[12] = 0x07;
-        let shift =
-            Oracle::from_canonical_bytes(&shift_bytes).expect_copied("2^99 - 947 is canonical");
-        let expected = oracle_from_limbs(low).add(oracle_from_limbs(high).mul(shift));
-        expected.to_canonical_bytes()
+        value.to_canonical_bytes()
     }
 
     #[test]
     fn wide_reduction_matches_the_montgomery_oracle_on_boundaries() {
-        let top_limb_mask = (1_u64 << 26) - 1;
+        let top_limb_mask = (1_u64 << 30) - 1;
         let mut state = 0x4d41_4346_4f4c_4432_u64;
         let mut case_index = 0_usize;
-        // 602 one-hot patterns, named boundaries, and randomized wide values,
-        // all limited to the reachable product range below 2^602.
+        // 606 one-hot patterns, named boundaries, and randomized wide values,
+        // covering every bit reachable by products of values below 4p.
         while case_index < 50_000 {
             let mut wide = [0_u64; LIMBS * 2];
-            if case_index < 602 {
+            if case_index < 606 {
                 wide[case_index / 64] = 1_u64 << (case_index % 64);
-            } else if case_index == 602 {
+            } else if case_index == 606 {
                 // all reachable bits set
                 let mut limb = 0;
                 while limb < LIMBS * 2 {
@@ -870,9 +859,9 @@ mod tests {
                     limb += 1;
                 }
                 wide[LIMBS * 2 - 1] = top_limb_mask;
-            } else if case_index == 603 {
+            } else if case_index == 607 {
                 wide[LIMBS * 2 - 1] = top_limb_mask;
-            } else if case_index == 604 {
+            } else if case_index == 608 {
                 // alternating bit pattern across the full reachable width
                 let mut limb = 0;
                 while limb < LIMBS * 2 {
@@ -880,7 +869,7 @@ mod tests {
                     limb += 1;
                 }
                 wide[LIMBS * 2 - 1] &= top_limb_mask;
-            } else if case_index == 605 {
+            } else if case_index == 609 {
                 let mut limb = 0;
                 while limb < LIMBS * 2 {
                     wide[limb] = 0x5555_5555_5555_5555;
@@ -1012,6 +1001,113 @@ mod tests {
                 sub_oracle
                     .mul(Oracle::from_u64(2_086_388_028))
                     .to_canonical_bytes()
+            );
+        }
+    }
+
+    #[cfg(feature = "x301")]
+    #[test]
+    fn x301_full_lazy_domain_matches_independent_oracle() {
+        fn below(left: [u64; LIMBS], right: [u64; LIMBS]) -> bool {
+            subtract_limbs(left, right).1 == 1
+        }
+
+        fn random_below(state: &mut u64, bound: [u64; LIMBS]) -> [u64; LIMBS] {
+            loop {
+                let mut value = [0_u64; LIMBS];
+                for word in &mut value {
+                    *word = splitmix64(state);
+                }
+                value[4] &= (1_u64 << 47) - 1;
+                if below(value, bound) {
+                    return value;
+                }
+            }
+        }
+
+        fn minus_one(mut value: [u64; LIMBS]) -> [u64; LIMBS] {
+            let mut index = 0;
+            loop {
+                let (word, borrow) = value[index].overflowing_sub(1);
+                value[index] = word;
+                if !borrow {
+                    return value;
+                }
+                index += 1;
+            }
+        }
+
+        fn oracle_from_words(words: [u64; LIMBS]) -> Oracle {
+            let mut wide = [0_u64; LIMBS * 2];
+            wide[..LIMBS].copy_from_slice(&words);
+            Oracle::from_canonical_bytes(&oracle_reduce_wide(wide))
+                .expect_copied("wide oracle output is canonical")
+        }
+
+        fn assert_below_two_p(value: Fe301Lazy) {
+            assert!(below(value.0, MODULUS_TIMES_TWO));
+        }
+
+        fn assert_product(left: [u64; LIMBS], right: [u64; LIMBS]) {
+            let reduced = Fe301LazyLinear(left).mul(Fe301LazyLinear(right));
+            assert_below_two_p(reduced);
+            assert_eq!(
+                reduced.canonical().to_canonical_bytes(),
+                oracle_from_words(left)
+                    .mul(oracle_from_words(right))
+                    .to_canonical_bytes()
+            );
+        }
+
+        let (four_p, carry) = add_limbs(MODULUS_TIMES_TWO, MODULUS_TIMES_TWO);
+        assert_eq!(carry, 0);
+        let (three_p, carry) = add_limbs(MODULUS_TIMES_TWO, MODULUS);
+        assert_eq!(carry, 0);
+        let directed = [
+            [0_u64; LIMBS],
+            [1, 0, 0, 0, 0],
+            minus_one(MODULUS),
+            MODULUS,
+            minus_one(MODULUS_TIMES_TWO),
+            MODULUS_TIMES_TWO,
+            minus_one(three_p),
+            three_p,
+            minus_one(four_p),
+        ];
+        for left in directed {
+            for right in directed {
+                assert_product(left, right);
+            }
+        }
+
+        let mut state = 0x5833_3031_2d46_554c_u64;
+        for _ in 0..100_000 {
+            let left = random_below(&mut state, four_p);
+            let right = random_below(&mut state, four_p);
+            assert_product(left, right);
+
+            let square = Fe301LazyLinear(left).square();
+            assert_below_two_p(square);
+            assert_eq!(
+                square.canonical().to_canonical_bytes(),
+                oracle_from_words(left).square().to_canonical_bytes()
+            );
+
+            let multiplier = splitmix64(&mut state) as u32;
+            let small = Fe301LazyLinear(left).mul_small(multiplier);
+            assert_below_two_p(small);
+            assert_eq!(
+                small.canonical().to_canonical_bytes(),
+                oracle_from_words(left)
+                    .mul(Oracle::from_u64(multiplier as u64))
+                    .to_canonical_bytes()
+            );
+
+            let tightened = Fe301LazyLinear(left).tighten();
+            assert_below_two_p(tightened);
+            assert_eq!(
+                tightened.canonical().to_canonical_bytes(),
+                oracle_from_words(left).to_canonical_bytes()
             );
         }
     }

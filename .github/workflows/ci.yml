@@ -62,6 +62,15 @@ jobs:
             "$digest" check
           "$snapshot/scripts/run-authoritative-gate.sh" archive \
             "$digest" run-x301-fuzz --runs 20000
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ychromosome/ed301-eddsa
+          ref: eaebfe5048757c3daa2e257e9a74175ca3fe1d4c
+          path: canonical-ed301
+      - name: Verify shared Ed301 arithmetic provenance
+        run: |
+          python3 -I -B scripts/check-ed301-arithmetic-provenance.py \
+            "$PWD/canonical-ed301" "$PWD"
 
   provider:
     needs: core
