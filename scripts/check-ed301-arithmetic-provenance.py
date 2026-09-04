@@ -17,11 +17,34 @@ SHARED_FUNCTIONS = {
     "crates/ed301-eddsa/src/field_5x64.rs": (
         "multiply_wide",
         "multiply_five_by_u32",
+        "reduce_small_product_unreduced",
         "square_wide",
         "reduce_wide",
         "reduce_wide_unreduced",
         "accumulate_fold",
     ),
+}
+SHARED_METHODS = {
+    "crates/ed301-eddsa/src/field_5x64.rs": {
+        "Fe301Lazy": (
+            "from_fe301",
+            "canonical",
+            "add_loose",
+            "sub_loose",
+            "mul",
+            "square",
+            "mul_small",
+        ),
+        "Fe301LazyLinear": (
+            "mul",
+            "square",
+            "mul_tight",
+            "tighten",
+        ),
+    }
+}
+SHARED_CONSTANTS = {
+    "crates/ed301-eddsa/src/field_5x64.rs": ("MODULUS_TIMES_TWO",),
 }
 
 
@@ -53,6 +76,32 @@ def function_block(source: str, name: str) -> str:
     raise ValueError(f"function {name} has an unterminated body")
 
 
+def impl_block(source: str, name: str) -> str:
+    match = re.search(rf"(?m)^impl\s+{name}\s*{{", source)
+    if match is None:
+        raise ValueError(f"missing impl {name}")
+    brace = source.find("{", match.start())
+    depth = 0
+    for index in range(brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[match.start() : index + 1]
+    raise ValueError(f"impl {name} has an unterminated body")
+
+
+def constant_block(source: str, name: str) -> str:
+    match = re.search(rf"(?m)^const\s+{name}\b[^=]*=", source)
+    if match is None:
+        raise ValueError(f"missing constant {name}")
+    end = source.find(";", match.end())
+    if end < 0:
+        raise ValueError(f"constant {name} has no terminator")
+    return source[match.start() : end + 1]
+
+
 def git_head(root: pathlib.Path) -> str:
     return subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
@@ -77,6 +126,34 @@ def main() -> int:
                 raise SystemExit(f"shared arithmetic differs: {relative}:{function}")
             digest = hashlib.sha256(expected.encode()).hexdigest()
             print(f"shared_arithmetic={relative}:{function} sha256={digest}")
+    for relative, implementations in SHARED_METHODS.items():
+        ed_source = (ed301 / relative).read_text(encoding="utf-8")
+        x_source = (x301 / relative).read_text(encoding="utf-8")
+        for implementation, methods in implementations.items():
+            ed_impl = impl_block(ed_source, implementation)
+            x_impl = impl_block(x_source, implementation)
+            for method in methods:
+                expected = function_block(ed_impl, method)
+                actual = function_block(x_impl, method)
+                if actual != expected:
+                    raise SystemExit(
+                        f"shared arithmetic differs: {relative}:{implementation}::{method}"
+                    )
+                digest = hashlib.sha256(expected.encode()).hexdigest()
+                print(
+                    f"shared_arithmetic={relative}:{implementation}::{method} "
+                    f"sha256={digest}"
+                )
+    for relative, constants in SHARED_CONSTANTS.items():
+        ed_source = (ed301 / relative).read_text(encoding="utf-8")
+        x_source = (x301 / relative).read_text(encoding="utf-8")
+        for constant in constants:
+            expected = constant_block(ed_source, constant)
+            actual = constant_block(x_source, constant)
+            if actual != expected:
+                raise SystemExit(f"shared arithmetic differs: {relative}:{constant}")
+            digest = hashlib.sha256(expected.encode()).hexdigest()
+            print(f"shared_arithmetic={relative}:{constant} sha256={digest}")
     print(f"ed301_arithmetic_provenance=PASS commit={CANONICAL_COMMIT}")
     return 0
 

@@ -195,7 +195,7 @@ LADDER=$EVIDENCE/x301-ladder.asm
 extract_symbol 'ed301_eddsa::x301::ladder' "$LADDER"
 if awk '
     /^[[:space:]]*[[:xdigit:]]+:/ &&
-            ($2 == "udiv" || $2 == "sdiv" || $2 == "brk" ||
+            ($2 == "b" || $2 == "udiv" || $2 == "sdiv" || $2 == "brk" ||
              $2 == "hlt" || $2 == "udf" || $2 == "bl" ||
              $2 == "blr" || $2 == "br") { print; bad = 1 }
     END { exit bad ? 0 : 1 }
@@ -203,12 +203,29 @@ if awk '
     echo "forbidden instruction or call in AArch64 ladder" >&2
     exit 1
 fi
-ladder_branches=$(awk '
-    /^[[:space:]]*[[:xdigit:]]+:/ &&
-            ($2 ~ /^b\./ || $2 == "cbz" || $2 == "cbnz" ||
-             $2 == "tbz" || $2 == "tbnz") { count++ }
-    END { print count + 0 }
-' "$LADDER")
+valid_ladder_loop() {
+    awk '
+        /^[[:space:]]*[[:xdigit:]]+:/ {
+            address = $1
+            sub(/:$/, "", address)
+            seen[address] = 1
+            if ($0 ~ /#0x12d([[:space:]]|$)/ || $0 ~ /#301([[:space:]]|$)/)
+                rounds = 1
+            if ($2 ~ /^b\./ || $2 == "cbz" || $2 == "cbnz" ||
+                    $2 == "tbz" || $2 == "tbnz") {
+                count++
+                if (!($3 in seen))
+                    forward_or_external = 1
+            }
+        }
+        END { exit count == 1 && rounds && !forward_or_external ? 0 : 1 }
+    ' "$1"
+}
+if ! valid_ladder_loop "$LADDER"; then
+    echo "AArch64 ladder must contain one backward fixed-301-round branch" >&2
+    exit 1
+fi
+ladder_branches=1
 ladder_selects=$(awk '
     /^[[:space:]]*[[:xdigit:]]+:/ &&
             $2 ~ /^(csel|csinc|csinv|csneg|cset|csetm|cinc|cinv|cneg)$/ {
@@ -216,8 +233,6 @@ ladder_selects=$(awk '
     }
     END { print count + 0 }
 ' "$LADDER")
-test "$ladder_branches" -gt 0
-test "$ladder_branches" -le 2
 test "$ladder_selects" -ge 20
 printf 'PASS x301_aarch64_ladder conditional_branches=%s conditional_select=%s calls=0\n' \
     "$ladder_branches" "$ladder_selects" | tee -a "$SUMMARY"
@@ -229,6 +244,15 @@ if ! forbidden_straight_line "$NEGATIVE" >/dev/null; then
     exit 1
 fi
 printf 'PASS aarch64_negative_control=conditional-branch-rejected\n' \
+    | tee -a "$SUMMARY"
+LADDER_NEGATIVE=$EVIDENCE/negative-ladder-control.asm
+printf '0: mov w1, #0x12d // #301\n4: b.ne 0\n8: b.ne 0\n' \
+    >"$LADDER_NEGATIVE"
+if valid_ladder_loop "$LADDER_NEGATIVE"; then
+    echo "AArch64 ladder checker accepted a second branch" >&2
+    exit 1
+fi
+printf 'PASS aarch64_negative_control=second-ladder-branch-rejected\n' \
     | tee -a "$SUMMARY"
 (cd "$EVIDENCE" && \
     find . -type f ! -name SHA256SUMS -print0 \

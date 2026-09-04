@@ -58,7 +58,7 @@ provider-owned X301 and hybrid shared-secret buffers. Corpora under
 `fuzz/corpus/` are tracked; crashes and evolving corpora remain outside the
 verified tree.
 
-TLS wire-state coverage-guided fuzzing and AArch64 runs remain open.
+TLS wire-state coverage-guided fuzzing remains open.
 
 ## Timing lane
 

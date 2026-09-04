@@ -8,9 +8,12 @@ helpers from Ed301 commit
 bodies and inline attributes byte for byte against that exact checkout:
 
 - `EdwardsPoint::{add, add_affine, double}`;
-- `multiply_wide`, `multiply_five_by_u32`, `square_wide`, `reduce_wide`,
-  `reduce_wide_unreduced`, and `accumulate_fold`.
+- `multiply_wide`, `multiply_five_by_u32`, `reduce_small_product_unreduced`,
+  `square_wide`, `reduce_wide`, `reduce_wide_unreduced`, and
+  `accumulate_fold`;
+- `MODULUS_TIMES_TWO`;
+- the shared `Fe301Lazy` and `Fe301LazyLinear` methods.
 
-X301 decoding, ladder, conditional swap, zeroization and protocol code are
-outside this comparison. Updating the Ed301 pin requires the full X301
-arithmetic, long-vector, taint and codegen gates.
+X301-only lazy methods, decoding, ladder, conditional swap, zeroization and
+protocol code are outside this comparison. Updating the Ed301 pin requires
+the full X301 arithmetic, long-vector, taint and codegen gates.

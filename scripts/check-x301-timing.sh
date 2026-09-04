@@ -29,8 +29,9 @@ case "$MEASUREMENTS" in
     ''|*[!0-9]*) echo "X301_TIMING_MEASUREMENTS must be a positive integer" >&2; exit 2 ;;
 esac
 
-for tool in /usr/bin/awk /usr/bin/cp /usr/bin/gcc /usr/bin/mkdir \
-        /usr/bin/sha256sum /usr/bin/uname; do
+for tool in /usr/bin/awk /usr/bin/cp /usr/bin/dirname /usr/bin/find \
+        /usr/bin/gcc /usr/bin/mkdir /usr/bin/readelf /usr/bin/sha256sum \
+        /usr/bin/sort /usr/bin/uname /usr/bin/xargs; do
     test -x "$tool" || {
         echo "missing timing-lane tool: $tool" >&2
         exit 127
@@ -54,6 +55,10 @@ test ! -e "$EVIDENCE" || {
 
 {
     printf 'source_manifest_sha256=%s\n' "$ED301_EXPECTED_SOURCE_MANIFEST_SHA256"
+    printf 'command=%s archive %s check-x301-timing --measurements %s %s %s %s\n' \
+        "$ROOT/scripts/run-authoritative-gate.sh" \
+        "$ED301_EXPECTED_SOURCE_MANIFEST_SHA256" "$MEASUREMENTS" \
+        "$PREFIX" "$MODULES" "$EVIDENCE"
     printf 'module_sha256=%s\n' \
         "$(/usr/bin/sha256sum "$EVIDENCE/modules/x301.so" | /usr/bin/awk '{ print $1 }')"
     for lib in "$PREFIX"/lib/libcrypto.so*; do
@@ -68,8 +73,8 @@ test ! -e "$EVIDENCE" || {
     printf 'measurements_per_test=%s\n' "$MEASUREMENTS"
     printf 'kernel=%s machine=%s\n' "$(/usr/bin/uname -r)" "$(/usr/bin/uname -m)"
     if [ -r /proc/cpuinfo ]; then
-        /usr/bin/awk -F': ' '/^model name/ { print "cpu_model=" $2; exit }' /proc/cpuinfo
-        /usr/bin/awk -F': ' '/^flags/ { print "cpu_flags=" $2; exit }' /proc/cpuinfo
+        /usr/bin/awk -F': ' '/^(model name|Model|Hardware)/ { print "cpu_model=" $2; exit }' /proc/cpuinfo
+        /usr/bin/awk -F': ' '/^(flags|Features)/ { print "cpu_flags=" $2; exit }' /proc/cpuinfo
     fi
     if [ -r /proc/loadavg ]; then
         printf 'loadavg_before=%s\n' "$(/usr/bin/awk '{ print $1, $2, $3 }' /proc/loadavg)"
@@ -77,6 +82,32 @@ test ! -e "$EVIDENCE" || {
     if [ -r /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
         printf 'cpu0_governor=%s\n' "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)"
     fi
+    lane_root=$(/usr/bin/dirname -- "$(/usr/bin/dirname -- "$PREFIX")")
+    openssl_version=$("$PREFIX/bin/openssl" version | /usr/bin/awk '{ print $2 }')
+    lane_manifest=$lane_root/logs/$openssl_version/evidence_manifest.sha256
+    if [ -f "$lane_manifest" ] && [ ! -L "$lane_manifest" ]; then
+        printf 'openssl_lane_evidence_sha256=%s\n' \
+            "$(/usr/bin/sha256sum "$lane_manifest" | /usr/bin/awk '{ print $1 }')"
+    else
+        printf 'openssl_lane_evidence_sha256=UNSEALED_PREFIX\n'
+    fi
+    printf 'openssl_executable_sha256=%s\n' \
+        "$(/usr/bin/sha256sum "$PREFIX/bin/openssl" | /usr/bin/awk '{ print $1 }')"
+    /usr/bin/readelf -p .comment "$EVIDENCE/modules/x301.so"
+    if [ -x /usr/bin/rustc ] \
+            && /usr/bin/rustc --version --verbose 2>&1; then
+        :
+    else
+        printf 'rustc_runtime=UNAVAILABLE_IN_HERMETIC_ENV\n'
+    fi
+    if [ -x /usr/bin/cargo ] \
+            && /usr/bin/cargo --version --verbose 2>&1; then
+        :
+    else
+        printf 'cargo_runtime=UNAVAILABLE_IN_HERMETIC_ENV\n'
+    fi
+    /usr/bin/gcc --version
+    "$PREFIX/bin/openssl" version -a
 } >"$EVIDENCE/RUN_IDENTITY.txt"
 
 /usr/bin/gcc -std=c11 -O2 -Wall -Wextra -Werror \
@@ -98,6 +129,11 @@ if [ -r /proc/loadavg ]; then
         >>"$EVIDENCE/RUN_IDENTITY.txt"
 fi
 sh "$ROOT/scripts/require-verified-snapshot.sh"
+(cd "$EVIDENCE" && \
+    /usr/bin/find . -type f ! -name SHA256SUMS -print0 \
+        | /usr/bin/sort -z | /usr/bin/xargs -0 /usr/bin/sha256sum \
+        >SHA256SUMS && \
+    /usr/bin/sha256sum --strict --quiet -c SHA256SUMS)
 cat "$EVIDENCE/SUMMARY.txt"
 case "$status" in
     0) printf 'x301_timing_gate=PASS evidence=%s\n' "$EVIDENCE" ;;

@@ -142,9 +142,9 @@ impl Fe301 {
     /// sufficient.
     #[inline(always)]
     pub(crate) fn mul_small(self, value: u32) -> Self {
-        Self(conditional_subtract_modulus_ct(reduce_small_product(
-            multiply_five_by_u32(self.0, value),
-        )))
+        Self(conditional_subtract_modulus_ct(
+            reduce_small_product_unreduced(multiply_five_by_u32(self.0, value)),
+        ))
     }
 
     #[inline(always)]
@@ -335,6 +335,7 @@ impl Fe301Lazy {
     #[cfg(feature = "x301")]
     pub(crate) const ONE: Self = Self([1, 0, 0, 0, 0]);
 
+    #[inline(always)]
     pub(crate) const fn from_fe301(value: Fe301) -> Self {
         Self(value.0)
     }
@@ -376,7 +377,9 @@ impl Fe301Lazy {
     /// Multiply by a public 32-bit constant, retaining the `[0, 2p)` bound.
     #[inline(always)]
     pub(crate) fn mul_small(self, value: u32) -> Self {
-        Self(reduce_small_product(multiply_five_by_u32(self.0, value)))
+        Self(reduce_small_product_unreduced(multiply_five_by_u32(
+            self.0, value,
+        )))
     }
 
     #[cfg(feature = "x301")]
@@ -429,7 +432,9 @@ impl Fe301LazyLinear {
     #[inline(always)]
     #[cfg(feature = "x301")]
     pub(crate) fn mul_small(self, value: u32) -> Fe301Lazy {
-        Fe301Lazy(reduce_small_product(multiply_five_by_u32(self.0, value)))
+        Fe301Lazy(reduce_small_product_unreduced(multiply_five_by_u32(
+            self.0, value,
+        )))
     }
 
     #[inline(always)]
@@ -588,7 +593,7 @@ const fn multiply_five_by_u32(value: [u64; LIMBS], multiplier: u32) -> [u64; LIM
 /// leaves a value below `2p`; canonical callers perform their final
 /// subtraction, while the X301 ladder deliberately keeps the wider bound.
 #[inline(always)]
-fn reduce_small_product(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
+fn reduce_small_product_unreduced(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
     let high = (product[4] >> TOP_BITS) | (product[5] << (64 - TOP_BITS));
     let mut reduced = [
         product[0],
@@ -598,6 +603,7 @@ fn reduce_small_product(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
         product[4] & TOP_MASK,
     ];
 
+    // Add high * 2^99.
     let add_low = high << 35;
     let add_high = high >> 29;
     let sum = reduced[1] as u128 + add_low as u128;
@@ -613,6 +619,7 @@ fn reduce_small_product(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
         index += 1;
     }
 
+    // Subtract high * 947 and add p back if that underflowed.
     let penalty = high as u128 * FOLD_SUBTRAHEND as u128;
     let (word, first_borrow) = sub_with_borrow_runtime(reduced[0], penalty as u64, 0);
     reduced[0] = word;
