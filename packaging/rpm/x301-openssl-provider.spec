@@ -1,10 +1,10 @@
 %bcond_without tests
 
-%global commit 73b30afd26abdf0fb49cca4249750dc812f8f96a
-%global shortcommit 73b30af
-%global snapshot 20260902
-%global source_manifest_sha256 0f98382033e319ac91aa0b17df33a0b0885087cb3c70d8f0010aa925af3f7632
-%global openssl_fork_evr 1:4.1.0~dev.1-0.3.git7d9c89d%{?dist}
+%global commit 1f0a9f4357a8aeb246bedf18f053b0dd7605186f
+%global shortcommit 1f0a9f4
+%global snapshot 20260904
+%global source_manifest_sha256 369a75dd5e9255fb63be7c610176e18f5d1a309f0538a4ebb6eff52cd7060a24
+%global openssl_fork_evr 1:4.1.0~dev.1-0.4.git9bbfc53%{?dist}
 %global provider_modulesdir %{_libdir}/ossl-modules
 %global __provides_exclude_from ^%{provider_modulesdir}/.*\.so$
 
@@ -169,6 +169,11 @@ echo 'The X301 policy fragment is installed as inert documentation.'
 exit 0
 
 %changelog
+* Fri Sep 04 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.9.20260904git1f0a9f4
+- Seed the provider DRBG from the child primary
+- Advertise the hybrid group only when ML-KEM-1024 is available
+- Ship the policy fragment as inert documentation
+
 * Wed Sep 02 2026 Martin Wolf <mwolf@adiumentum.com> - 0.1.0-0.8.20260902git73b30af
 - Pin the X301-only provider and hybrid assurance repairs
 - Verify the complete source inventory before applying the Fedora build patch
