@@ -20,8 +20,13 @@ awk '$1 ~ /^(Source[1-9][0-9]*|Patch[0-9]+):$/ { print $2 }' "$SPEC" \
     done
 
 grep -F '%package policy' "$SPEC" >/dev/null
-grep -F '%{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config' \
-    "$SPEC" >/dev/null
+grep -F 'opensslcnf-zz-x301.config.example' "$SPEC" >/dev/null
+if sed '/^%changelog/,$d' "$SPEC" \
+        | grep -F '%{_sysconfdir}/crypto-policies/local.d/' >/dev/null
+then
+    echo 'policy package still installs an active crypto-policy overlay' >&2
+    exit 1
+fi
 if sed '/^%changelog/,$d' "$SPEC" \
         | grep -E 'x301-crypto-policy|ssl-ctx-policy-probe' >/dev/null
 then
@@ -33,4 +38,4 @@ test ! -e "$ROOT/packaging/rpm/x301-crypto-policy"
 test ! -e "$ROOT/packaging/rpm/ssl-ctx-policy-probe.c"
 test ! -e "$ROOT/packaging/rpm/x301-crypto-policy.8"
 
-printf '%s\n' 'x301_rpm_packaging=PASS provider_auto=1 policy_groups_auto=1'
+printf '%s\n' 'x301_rpm_packaging=PASS provider_auto=1 policy_template=inert'

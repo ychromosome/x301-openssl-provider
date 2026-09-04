@@ -10,7 +10,7 @@
 
 Name:           x301-openssl-provider
 Version:        0.1.0
-Release:        0.8.%{snapshot}git%{shortcommit}%{?dist}
+Release:        0.9.%{snapshot}git%{shortcommit}%{?dist}
 Summary:        Experimental X301 key-exchange provider for OpenSSL
 License:        Apache-2.0
 URL:            https://github.com/ychromosome/x301-openssl-provider
@@ -44,15 +44,12 @@ group preference. X301 is not standardized or FIPS validated.
 Summary:        Explicit X301 OpenSSL group overlay for laboratory review
 BuildArch:      noarch
 Requires:       %{name}%{?_isa} = %{version}-%{release}
-Requires:       crypto-policies-scripts
+# Rebuild once after upgrading from releases that installed a local.d file.
 Requires(posttrans): crypto-policies-scripts
-Requires(postun): crypto-policies-scripts
 
 %description policy
-This laboratory package installs an OpenSSL overlay that places X301MLKEM1024
-before the nonempty Fedora group list. It is not a native
-crypto-policies module and must not be used with FIPS, BSI, EMPTY or another
-group-empty policy.
+This laboratory package contains an inert OpenSSL policy-fragment example.
+It does not change the selected Fedora crypto policy.
 
 %prep
 %setup -q -n x301-openssl-provider-%{commit}
@@ -63,6 +60,7 @@ env -i PATH=/usr/bin:/bin HOME=%{_builddir} LC_ALL=C \
     /bin/sh scripts/verify-source-tree.sh
 %autopatch -p1
 install -pm 0644 %{SOURCE3} README.crypto-policy
+install -pm 0644 %{SOURCE2} opensslcnf-zz-x301.config.example
 pushd provider
 %cargo_prep -v ../vendor
 popd
@@ -92,8 +90,6 @@ install -Dpm 0755 provider/target/rpm/libx301.so \
     %{buildroot}%{provider_modulesdir}/x301.so
 install -Dpm 0644 %{SOURCE1} \
     %{buildroot}%{_sysconfdir}/pki/tls/openssl.d/x301-provider.conf
-install -Dpm 0644 %{SOURCE2} \
-    %{buildroot}%{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config
 
 %check
 %if %{with tests}
@@ -157,8 +153,7 @@ env OPENSSL_CONF=/dev/null \
 %{provider_modulesdir}/x301.so
 
 %files policy
-%doc README.crypto-policy
-%config(noreplace) %{_sysconfdir}/crypto-policies/local.d/opensslcnf-zz-x301.config
+%doc README.crypto-policy opensslcnf-zz-x301.config.example
 
 %posttrans
 echo 'WARNING: X301 and X301MLKEM1024 are experimental, non-standardized and not FIPS validated.'
@@ -167,20 +162,10 @@ exit 0
 
 %posttrans policy
 if ! %{_bindir}/update-crypto-policies; then
-    echo 'error: failed to regenerate the selected crypto policy' >&2
+    echo 'error: failed to remove a previous X301 policy overlay' >&2
     exit 1
 fi
-echo 'WARNING: The X301 laboratory OpenSSL group overlay is active.'
-echo 'Remove this package before selecting FIPS, BSI, EMPTY or a group-empty policy.'
-exit 0
-
-%postun policy
-if [ "$1" -eq 0 ]; then
-    if ! %{_bindir}/update-crypto-policies; then
-        echo 'error: failed to regenerate crypto policy after removing X301 policy' >&2
-        exit 1
-    fi
-fi
+echo 'The X301 policy fragment is installed as inert documentation.'
 exit 0
 
 %changelog
