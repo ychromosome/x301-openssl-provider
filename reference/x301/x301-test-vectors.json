@@ -1,0 +1,201 @@
+{
+  "d1": {
+    "checks": [
+      "Edwards-to-Montgomery round trip",
+      "Montgomery-to-Edwards round trip",
+      "group homomorphism"
+    ],
+    "deterministic_random_cases": 256
+  },
+  "parameters": {
+    "a": 2086388329,
+    "a24_minus": 1352799263534442616740139614956810975618594433699801520254760472424847496760878864324278092,
+    "base_edwards_encoding_hex": "6bf73f755a0c80653ce83fcf6d6ff7d7f347b1929224ac67552273419e6cf2c8a88a02d38898",
+    "base_u_encoding_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+    "d": 301,
+    "montgomery_A": 1337125101468798294423667083008487580371440947467333579746761624815927501631542793281919359,
+    "montgomery_B": 2102386304867639485174889802292078795702081870378430469358638547115457185184343208357597462,
+    "p": 4074071952668972172536891376818756322102936787331872501272280264883462485411972664015193011,
+    "q": 1018517988167243043134222844204689080525734197342817290458622896758534223469429834039334403,
+    "q_twist": 1018517988167243043134222844204689080525734196323118960177517235683197019236556497968262103
+  },
+  "schema": "x301-independent-reference-v2",
+  "sources": [
+    "RFC 7748 Sections 4-6",
+    "inputs/round4/ED301-EdDSA-draft.md Sections 2-3",
+    "docs/X301_DRAFT.md"
+  ],
+  "t1": [
+    {
+      "id": "zero-base",
+      "result_le38_hex": "487a027e0dc2f97afddee9cd5ed736e09e6553b01daa10e8197734696d98cbe3789842f69609",
+      "scalar_clamped_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000010",
+      "scalar_input_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "u_input_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308"
+    },
+    {
+      "id": "incrementing-base",
+      "result_le38_hex": "b5d19e31e6bfa6f5c47411738360ba94b7bbff1c4bb9fc646e9775bbd7565a6052819781c21a",
+      "scalar_clamped_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232415",
+      "scalar_input_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425",
+      "u_input_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308"
+    },
+    {
+      "id": "ones-base",
+      "result_le38_hex": "a7baa1772432b27feb2461902bf29a9e132fefde44f38ec6ea246711cbfe85a6caa4524fa506",
+      "scalar_clamped_hex": "fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1f",
+      "scalar_input_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "u_input_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308"
+    },
+    {
+      "id": "shake-peer",
+      "result_le38_hex": "ca65660351c3189c8654a274c90d6dc075a6c9622a2fb75bb44ebef19a8b478051ec5d73ec07",
+      "scalar_clamped_hex": "6c94343fc20302411e13a08101ff214268eae5896efd980d3ef158542ef3b15df780541c4a11",
+      "scalar_input_hex": "6c94343fc20302411e13a08101ff214268eae5896efd980d3ef158542ef3b15df780541c4ae1",
+      "u_input_le38_hex": "5e775cd89c28916e92551ef8bd18a6bd3a2f4e6bf3f6b3c3429b5db20a65bae7c9abcdef4a08"
+    }
+  ],
+  "t2": {
+    "after_1000_hex": "8684cf6cebf163576e535abaf21f539129f31498e18e97abb0cf736ed9dd703cdd28768fd915",
+    "after_1_hex": "2866fa9dafb46a557566d84931090545f86f6c4f90b73d41da0bd39a248f561b102ca0a76b1e",
+    "initial_scalar_and_u_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308"
+  },
+  "t3": [
+    {
+      "expected_value_le38_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "id": "u-equals-p",
+      "input_hex": "b30300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f"
+    },
+    {
+      "expected_value_le38_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000",
+      "id": "u-equals-p-plus-one",
+      "input_hex": "b40300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f"
+    },
+    {
+      "expected_value_le38_hex": "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+      "id": "u-equals-p-minus-one",
+      "input_hex": "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f"
+    },
+    {
+      "expected_value_le38_hex": "4cfcffffffffffffffffffff0700000000000000000000000000000000000000000000000000",
+      "id": "u-max-301-bit",
+      "input_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1f"
+    },
+    {
+      "expected_value_le38_hex": "4bfcffffffffffffffffffff0700000000000000000000000000000000000000000000000000",
+      "id": "u-p-plus-max-alias-minus-one",
+      "input_hex": "feffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1f"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-20",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546328"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-40",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546348"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-60",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546368"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-80",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546388"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-a0",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae95463a8"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-c0",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae95463c8"
+    },
+    {
+      "expected_value_le38_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308",
+      "id": "u-high-mask-e0",
+      "input_hex": "5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae95463e8"
+    },
+    {
+      "expected_error": "length",
+      "id": "u-length-37",
+      "input_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "expected_error": "length",
+      "id": "u-length-39",
+      "input_hex": "000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "t4": {
+    "derivation": {
+      "doubling_numerator": "(u^2-1)^2",
+      "order_two_polynomial": "u*(u^2+A*u+1)",
+      "quadratic_discriminant_hex": "15636a1413db537e6c8c8258a7d674ba9d4a925f2454e3ae4ec67a2b27825a7dd162a885973b",
+      "quadratic_discriminant_legendre": -1
+    },
+    "identity_has_no_affine_u_encoding": true,
+    "main_curve": [
+      {
+        "encoding_le38_hex": null,
+        "order": 1,
+        "points": 1,
+        "u": null
+      },
+      {
+        "encoding_le38_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "order": 2,
+        "points": 1,
+        "u": 0
+      },
+      {
+        "encoding_le38_hex": "0100000000000000000000000000000000000000000000000000000000000000000000000000",
+        "order": 4,
+        "points": 2,
+        "u": 1,
+        "v_values": [
+          45677,
+          4074071952668972172536891376818756322102936787331872501272280264883462485411972664015147334
+        ]
+      }
+    ],
+    "quadratic_twist": [
+      {
+        "encoding_le38_hex": null,
+        "order": 1,
+        "points": 1,
+        "u": null
+      },
+      {
+        "encoding_le38_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "order": 2,
+        "points": 1,
+        "u": 0
+      },
+      {
+        "encoding_le38_hex": "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f",
+        "order": 4,
+        "points": 2,
+        "u": 4074071952668972172536891376818756322102936787331872501272280264883462485411972664015193010
+      }
+    ],
+    "unique_rejection_encodings_le38_hex": [
+      "0000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "0100000000000000000000000000000000000000000000000000000000000000000000000000",
+      "b20300000000000000000000f8ffffffffffffffffffffffffffffffffffffffffffffffff1f"
+    ]
+  },
+  "t5": {
+    "count": 10000,
+    "first_record": "0\t5961f6123d4802863ddb551f087982b42d33476d85a5b02caa1a38aa74a3447ae87b40651ef2\t3485034680606f2ebbdc2a5d2ee3b9c499bfb9a88df74024196e101b1c7119c59c2981623219\tafe31a767320918c402f56e8addc628ee801fcf62f09076465beb5012c0c7ef5583693fddee0\t0394ea1eca734c75162b2fa0b8378c15455fa876b150972fd6f45bc2441bb1087e8d9cc55615\t46df2620e9a95e94e2dc2774be717d9ee9a855a307a66742bb473849ac139e24917c6371bc05",
+    "last_record": "9999\t3b17284b3905ce11be20baa33767465536279ccb93ce62cce5f2f34ebd1907a11f292f5cc3ec\tcd5ff6c15073482341382c77a1ddeb8142cfba2feed6b0720734d47097133ea4cbc50a39b611\tb2c46c735e0d48c12595dfe39a85c8611368b889a1fa29541cc24589960a85281270ed0fccff\tc1ba842b52480e8e70fd3558367b73ae268c2c1b1549a91294b1aadf78b2fa2e7a952862360b\t08d05bfb6a7980329e6dbf68d904b2e969863f44d9539acd9c71d5b793d0d7801c18d0474a0e",
+    "record_format": "index TAB secret_a TAB public_a TAB secret_b TAB public_b TAB shared NEWLINE",
+    "sha256": "257711151f37d9011cbf42123901ae914b77e461db7edb80ee85405e4b97d076"
+  },
+  "warning": "variable-time test oracle; never use with production secrets"
+}
