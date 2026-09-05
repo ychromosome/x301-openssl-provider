@@ -79,7 +79,7 @@ PUBLIC_CALLS=$EVIDENCE/x301-public-from-secret-calls.txt
 PUBLIC_MAP_CALLS=$EVIDENCE/x301-public-map-calls.txt
 /usr/bin/objdump -d -C --no-show-raw-insn --disassemble-zeroes --wide \
     "$MODULE" >"$DUMP"
-/usr/bin/nm -C --defined-only "$MODULE" >"$EVIDENCE/provider.nm"
+/usr/bin/nm -S -C --defined-only "$MODULE" >"$EVIDENCE/provider.nm"
 : >"$SUMMARY"
 
 count_symbol() {
@@ -104,32 +104,24 @@ count_symbol() {
     ' "$input"
 }
 
-trim_terminal_padding() {
+clip_symbol_extent() {
     input=$1
     output=$2
-    /usr/bin/awk '
-        function flush_padding(    slot) {
-            for (slot = 1; slot <= padding_count; slot++)
-                print padding[slot]
-            delete padding
-            padding_count = 0
+    start=$3
+    size=$4
+    /usr/bin/gawk -v start="$start" -v size="$size" '
+        BEGIN {
+            first = strtonum("0x" start)
+            end = first + strtonum("0x" size)
+            if (end <= first)
+                exit 2
         }
         /^[[:space:]]*[[:xdigit:]]+:/ {
-            mnemonic = $2
-            if (mnemonic == "int3" ||
-                    $0 ~ /[[:space:]]nop[a-z]*[[:space:]]/) {
-                padding[++padding_count] = $0
+            address = strtonum("0x" $1)
+            if (address < first || address >= end)
                 next
-            }
-            if (padding_count != 0)
-                flush_padding()
-            last_mnemonic = mnemonic
         }
         { print }
-        END {
-            if (padding_count != 0 && last_mnemonic !~ /^retq?$/)
-                flush_padding()
-        }
     ' "$input" >"$output"
 }
 
@@ -158,7 +150,31 @@ extract_symbol() {
         }
         active { print }
     ' "$DUMP" >"$raw"
-    trim_terminal_padding "$raw" "$output"
+    # objdump also emits alignment bytes after the ELF function's extent,
+    # including after non-returning unwind calls. Never omit an in-range trap.
+    extent=$(/usr/bin/awk -v symbol="$symbol" '
+        function canonical(name) {
+            if (substr(name, 1, 1) == "<") {
+                sub(/^</, "", name)
+                sub(/>::/, "::", name)
+            }
+            return name
+        }
+        $1 ~ /^[[:xdigit:]]+$/ && $2 ~ /^[[:xdigit:]]+$/ && $3 ~ /^[tT]$/ {
+            address = $1
+            size = $2
+            name = $0
+            sub(/^[[:space:]]*[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+/, "", name)
+            if (canonical(name) == symbol)
+                print address, size
+        }
+    ' "$EVIDENCE/provider.nm")
+    set -- $extent
+    test "$#" -eq 2 || {
+        echo "missing or ambiguous ELF function extent: $symbol" >&2
+        exit 1
+    }
+    clip_symbol_extent "$raw" "$output" "$1" "$2"
     test -s "$output"
 }
 
@@ -212,7 +228,7 @@ forbidden_straight_line() {
 PADDING_OK_RAW=$EVIDENCE/terminal-padding-ok.raw
 PADDING_OK=$EVIDENCE/terminal-padding-ok.asm
 printf '0: ret\n1: int3\n2: int3\n' >"$PADDING_OK_RAW"
-trim_terminal_padding "$PADDING_OK_RAW" "$PADDING_OK"
+clip_symbol_extent "$PADDING_OK_RAW" "$PADDING_OK" 0 1
 if /usr/bin/grep -q int3 "$PADDING_OK"; then
     echo "terminal padding was not removed" >&2
     exit 1
@@ -220,12 +236,24 @@ fi
 PADDING_BAD_RAW=$EVIDENCE/terminal-padding-bad.raw
 PADDING_BAD=$EVIDENCE/terminal-padding-bad.asm
 printf '0: int3\n1: ret\n' >"$PADDING_BAD_RAW"
-trim_terminal_padding "$PADDING_BAD_RAW" "$PADDING_BAD"
+clip_symbol_extent "$PADDING_BAD_RAW" "$PADDING_BAD" 0 2
 if ! forbidden_straight_line "$PADDING_BAD" >/dev/null; then
     echo "internal trap padding was accepted" >&2
     exit 1
 fi
-printf 'PASS terminal_padding=after-ret-only\n' | tee -a "$SUMMARY"
+printf '0: ret\n1: int3\n' >"$PADDING_BAD_RAW"
+clip_symbol_extent "$PADDING_BAD_RAW" "$PADDING_BAD" 0 2
+if ! forbidden_straight_line "$PADDING_BAD" >/dev/null; then
+    echo "in-range trap after ret was accepted" >&2
+    exit 1
+fi
+printf '0: call 8 <_Unwind_Resume>\n5: int3\n' >"$PADDING_OK_RAW"
+clip_symbol_extent "$PADDING_OK_RAW" "$PADDING_OK" 0 5
+if /usr/bin/grep -q int3 "$PADDING_OK"; then
+    echo "out-of-range unwind padding was not removed" >&2
+    exit 1
+fi
+printf 'PASS terminal_padding=outside-elf-function-only\n' | tee -a "$SUMMARY"
 
 extract_symbol 'ed301_eddsa::x301::x301' "$X301"
 extract_symbol 'ed301_eddsa::x301::ladder' "$LADDER"
@@ -248,22 +276,57 @@ fi
 
 # D3 folds the fixed top-one bit into initialization and the two low-zero bits
 # into finalization. Locate the remaining public loop (bits 299 through 2)
-# from its fixed counter value 300 through its backward conditional edge.
-/usr/bin/gawk '
+# from its sole backward edge. LLVM uses either a 300 -> 2 counter or a
+# one-biased 301 -> 3 counter; both address scalar bits 299 down through 2.
+extract_ladder_loop() {
+    /usr/bin/gawk '
     /^[[:space:]]*[[:xdigit:]]+:/ {
         address = $1
         sub(/:$/, "", address)
-        if (index($0, "$0x12c,%") != 0)
-            active = 1
-        if (active)
-            print
-        if (active && $2 ~ /^j/ && $2 !~ /^jmpq?$/ &&
-                $3 ~ /^[[:xdigit:]]+$/ &&
-                strtonum("0x" $3) < strtonum("0x" address))
-            exit
+        seen[address] = NR
+        if ($2 ~ /^j/) {
+            branches++
+            if ($2 == "ja" && $3 in seen &&
+                    strtonum("0x" $3) < strtonum("0x" address)) {
+                first = seen[$3]
+                last = NR
+            }
+        }
     }
-' "$LADDER" >"$LOOP"
+    { lines[NR] = $0 }
+    END {
+        if (branches != 1 || !first)
+            exit 1
+        start = first - 1
+        while (start > 0 && lines[start] ~ /[[:space:]]nop[a-z]*([[:space:]]|$)/)
+            start--
+        if (!start || lines[start] !~ /mov[[:space:]]+\$0x12[cd],%e[a-z0-9]+$/)
+            exit 1
+        for (i = start; i <= last; i++)
+            print lines[i]
+    }
+    ' "$1" >"$2"
+}
+extract_ladder_loop "$LADDER" "$LOOP"
 test -s "$LOOP"
+COUNTER_BAD=$EVIDENCE/negative-counter.raw
+COUNTER_OUT=$EVIDENCE/negative-counter.asm
+printf '0: mov $0x12d,%%ecx\n5: mov $0x12e,%%eax\na: dec %%rax\nd: cmp $0x3,%%rax\n11: ja a\n' \
+    >"$COUNTER_BAD"
+if extract_ladder_loop "$COUNTER_BAD" "$COUNTER_OUT"; then
+    echo "incorrect loop bound matched an earlier field constant" >&2
+    exit 1
+fi
+if head -1 "$LOOP" | grep -q '\$0x12c,'; then
+    grep -Eq 'cmp[[:space:]]+\$0x2,%rax$' "$LOOP"
+    grep -Eq 'lea[[:space:]]+-0x1\(%rcx\),%rax$' "$LOOP"
+    counter_shape=300-to-2
+else
+    grep -Eq 'cmp[[:space:]]+\$0x3,%rax$' "$LOOP"
+    grep -Eq 'add[[:space:]]+\$0xfffffffffffffffe,%rax$' "$LOOP"
+    grep -Eq 'dec[[:space:]]+%rax$' "$LOOP"
+    counter_shape=301-to-3
+fi
 
 branches=$(/usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^j/ { count++ }
@@ -519,8 +582,8 @@ if ! forbidden_straight_line "$NEGATIVE" >/dev/null; then
     exit 1
 fi
 
-printf 'PASS x301_ladder_rounds=301 variable_rounds=298 fixed_doublings=3 loop_branches=1 cmov=%s indexed_reads=1\n' \
-    "$cmov" | tee -a "$SUMMARY"
+printf 'PASS x301_ladder_rounds=301 variable_rounds=298 fixed_doublings=3 loop_branches=1 cmov=%s indexed_reads=1 counter=%s\n' \
+    "$cmov" "$counter_shape" | tee -a "$SUMMARY"
 printf '%s\n' \
     "PASS field_backend=ed301_eddsa::field_5x64 branch_free=1 ladder_shape=$ladder_field_shape" \
     'PASS negative_control=conditional-edge-rejected' | tee -a "$SUMMARY"

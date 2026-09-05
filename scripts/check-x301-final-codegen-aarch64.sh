@@ -152,9 +152,20 @@ check_straight_line affine_select \
 
 BASEPOINT_SELECT=$EVIDENCE/basepoint_select.asm
 extract_symbol 'ed301_eddsa::edwards::select_basepoint' "$BASEPOINT_SELECT"
-if awk '
+forbidden_basepoint_flow() {
+    awk '
+    function canonical(name) {
+        if (substr(name, 1, 1) == "<") {
+            sub(/^</, "", name)
+            sub(/>::/, "::", name)
+        }
+        return name
+    }
     /^[[:space:]]*[[:xdigit:]]+:/ {
         mnemonic = $2
+        target = $0
+        sub(/^[^<]*</, "", target)
+        sub(/>[[:space:]]*$/, "", target)
         if (mnemonic ~ /^b\./ || mnemonic == "b" || mnemonic == "blr" ||
                 mnemonic == "br" || mnemonic == "cbz" ||
                 mnemonic == "cbnz" || mnemonic == "tbz" ||
@@ -162,14 +173,32 @@ if awk '
                 mnemonic == "sdiv" || mnemonic == "brk" ||
                 mnemonic == "hlt" || mnemonic == "udf" ||
                 (mnemonic == "bl" &&
-                 $0 !~ /<ed301_eddsa::edwards::AffineNielsPoint::conditional_select>$/)) {
+                 canonical(target) != "ed301_eddsa::edwards::AffineNielsPoint::conditional_select")) {
             print
             bad = 1
         }
     }
     END { exit bad ? 0 : 1 }
-' "$BASEPOINT_SELECT"; then
+    ' "$1"
+}
+if forbidden_basepoint_flow "$BASEPOINT_SELECT"; then
     echo "forbidden AArch64 basepoint-selection control flow" >&2
+    exit 1
+fi
+CALL_FIXTURE=$EVIDENCE/basepoint-call-fixture.asm
+for target in \
+        'ed301_eddsa::edwards::AffineNielsPoint::conditional_select' \
+        '<ed301_eddsa::edwards::AffineNielsPoint>::conditional_select'; do
+    printf '0: bl 10 <%s>\n' "$target" >"$CALL_FIXTURE"
+    if forbidden_basepoint_flow "$CALL_FIXTURE" >/dev/null; then
+        echo "equivalent AArch64 call spelling was rejected" >&2
+        exit 1
+    fi
+done
+printf '0: bl 10 <ed301_eddsa::edwards::AffineNielsPoint::conditional_select_extra>\n' \
+    >"$CALL_FIXTURE"
+if ! forbidden_basepoint_flow "$CALL_FIXTURE" >/dev/null; then
+    echo "non-exact AArch64 call target was accepted" >&2
     exit 1
 fi
 basepoint_calls=$(awk '
