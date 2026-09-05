@@ -429,8 +429,10 @@ double_cmov=$(/usr/bin/awk '
     /^[[:space:]]*[[:xdigit:]]+:/ && $2 ~ /^cmov/ { count++ }
     END { print count + 0 }
 ' "$POINT_DOUBLE")
-test "$affine_cmov" -eq 30
-test "$double_cmov" -eq 40
+# Each formula has one small-constant multiply. Its proven no-underflow fold
+# omits one five-word selection; all remaining field corrections still apply.
+test "$affine_cmov" -eq 25
+test "$double_cmov" -eq 35
 printf 'PASS x301_fixed_base_edwards add_affine_cmov=%s double_cmov=%s branch_free=1 indexed_memory=0 calls=0\n' \
     "$affine_cmov" "$double_cmov" | tee -a "$SUMMARY"
 

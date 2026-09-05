@@ -8,6 +8,12 @@ import sys
 
 
 CANONICAL_COMMIT = "eaebfe5048757c3daa2e257e9a74175ca3fe1d4c"
+# Reviewed local source identities, not mathematical correctness evidence.
+# Bounds and functional/CT gates are specified in ED301_ARITHMETIC_PROVENANCE.md.
+LOCAL_ADAPTATIONS = {
+    "reduce_small_product_unreduced": "ca268cb06f72461dda136f6f6904aec416716d422921dca8fadc86afe285a2a7",
+    "square_wide": "8c258c04abccadf4890eb0f5fdb229f9a4e725f692e285502d6d73fc24f2493a",
+}
 SHARED_FUNCTIONS = {
     "crates/ed301-eddsa/src/edwards.rs": (
         "add",
@@ -122,6 +128,12 @@ def main() -> int:
         for function in functions:
             expected = function_block(ed_source, function)
             actual = function_block(x_source, function)
+            if function in LOCAL_ADAPTATIONS:
+                digest = hashlib.sha256(actual.encode()).hexdigest()
+                if actual == expected or digest != LOCAL_ADAPTATIONS[function]:
+                    raise SystemExit(f"local arithmetic identity differs: {function}")
+                print(f"local_arithmetic={relative}:{function} sha256={digest}")
+                continue
             if actual != expected:
                 raise SystemExit(f"shared arithmetic differs: {relative}:{function}")
             digest = hashlib.sha256(expected.encode()).hexdigest()
@@ -154,7 +166,10 @@ def main() -> int:
                 raise SystemExit(f"shared arithmetic differs: {relative}:{constant}")
             digest = hashlib.sha256(expected.encode()).hexdigest()
             print(f"shared_arithmetic={relative}:{constant} sha256={digest}")
-    print(f"ed301_arithmetic_provenance=PASS commit={CANONICAL_COMMIT}")
+    print(
+        f"ed301_arithmetic_provenance=PASS commit={CANONICAL_COMMIT} "
+        f"local_adaptations={len(LOCAL_ADAPTATIONS)}"
+    )
     return 0
 
 

@@ -619,7 +619,10 @@ fn reduce_small_product_unreduced(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
         index += 1;
     }
 
-    // Subtract high * 947 and add p back if that underflowed.
+    // Subtract high * 947. No correction is needed: before this subtraction
+    // the value is low + high * 2^99, so the result is non-negative.
+    // For inputs below 4p times u32::MAX the high part has at most 34 bits;
+    // the addition fits five limbs and the penalty fits one limb.
     let penalty = high as u128 * FOLD_SUBTRAHEND as u128;
     let (word, first_borrow) = sub_with_borrow_runtime(reduced[0], penalty as u64, 0);
     reduced[0] = word;
@@ -631,79 +634,48 @@ fn reduce_small_product_unreduced(product: [u64; LIMBS + 1]) -> [u64; LIMBS] {
         borrow = next_borrow;
         index += 1;
     }
-    let (corrected, _) = add_limbs(reduced, MODULUS);
-    reduced.ct_assign(&corrected, Choice::from_u8_lsb(borrow as u8));
+    debug_assert_eq!(borrow, 0);
     reduced
 }
 
 #[inline(always)]
 const fn square_wide(value: [u64; LIMBS]) -> [u64; LIMBS * 2] {
+    // OpenSSL crypto/bn/bn_sqr.c:bn_sqr_normal: double the cross products,
+    // then add the diagonals. Their sum is x^2 < 2^640, so neither overflows.
     let mut output = [0_u64; LIMBS * 2];
-    let mut accumulator = [0_u64; 3];
-
-    accumulate_product(&mut accumulator, value[0], value[0]);
-    emit_square_column(&mut output, 0, &mut accumulator);
-    accumulate_double_product(&mut accumulator, value[0], value[1]);
-    emit_square_column(&mut output, 1, &mut accumulator);
-    accumulate_double_product(&mut accumulator, value[0], value[2]);
-    accumulate_product(&mut accumulator, value[1], value[1]);
-    emit_square_column(&mut output, 2, &mut accumulator);
-    accumulate_double_product(&mut accumulator, value[0], value[3]);
-    accumulate_double_product(&mut accumulator, value[1], value[2]);
-    emit_square_column(&mut output, 3, &mut accumulator);
-    accumulate_double_product(&mut accumulator, value[0], value[4]);
-    accumulate_double_product(&mut accumulator, value[1], value[3]);
-    accumulate_product(&mut accumulator, value[2], value[2]);
-    emit_square_column(&mut output, 4, &mut accumulator);
-    accumulate_double_product(&mut accumulator, value[1], value[4]);
-    accumulate_double_product(&mut accumulator, value[2], value[3]);
-    emit_square_column(&mut output, 5, &mut accumulator);
-    accumulate_double_product(&mut accumulator, value[2], value[4]);
-    accumulate_product(&mut accumulator, value[3], value[3]);
-    emit_square_column(&mut output, 6, &mut accumulator);
-    accumulate_double_product(&mut accumulator, value[3], value[4]);
-    emit_square_column(&mut output, 7, &mut accumulator);
-    accumulate_product(&mut accumulator, value[4], value[4]);
-    emit_square_column(&mut output, 8, &mut accumulator);
-    output[9] = accumulator[0];
+    let mut i = 0;
+    while i < LIMBS - 1 {
+        let mut carry = 0_u64;
+        let mut j = i + 1;
+        while j < LIMBS {
+            let p = value[i] as u128 * value[j] as u128 + output[i + j] as u128 + carry as u128;
+            output[i + j] = p as u64;
+            carry = (p >> 64) as u64;
+            j += 1;
+        }
+        output[i + LIMBS] = carry;
+        i += 1;
+    }
+    let mut carry = 0_u64;
+    i = 0;
+    while i < LIMBS * 2 {
+        let next = output[i] >> 63;
+        output[i] = (output[i] << 1) | carry;
+        carry = next;
+        i += 1;
+    }
+    carry = 0;
+    i = 0;
+    while i < LIMBS {
+        let p = value[i] as u128 * value[i] as u128;
+        let low = output[2 * i] as u128 + (p as u64) as u128 + carry as u128;
+        output[2 * i] = low as u64;
+        let high = output[2 * i + 1] as u128 + (p >> 64) + (low >> 64);
+        output[2 * i + 1] = high as u64;
+        carry = (high >> 64) as u64;
+        i += 1;
+    }
     output
-}
-
-#[inline(always)]
-const fn accumulate_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
-    let product = left as u128 * right as u128;
-    accumulate_192(accumulator, product as u64, (product >> 64) as u64, 0);
-}
-
-#[inline(always)]
-const fn accumulate_double_product(accumulator: &mut [u64; 3], left: u64, right: u64) {
-    let product = left as u128 * right as u128;
-    let low = product as u64;
-    let high = (product >> 64) as u64;
-    accumulate_192(accumulator, low << 1, (high << 1) | (low >> 63), high >> 63);
-}
-
-#[inline(always)]
-const fn accumulate_192(accumulator: &mut [u64; 3], low: u64, middle: u64, high: u64) {
-    let sum = accumulator[0] as u128 + low as u128;
-    accumulator[0] = sum as u64;
-    let sum = accumulator[1] as u128 + middle as u128 + (sum >> 64);
-    accumulator[1] = sum as u64;
-    accumulator[2] = accumulator[2]
-        .wrapping_add(high)
-        .wrapping_add((sum >> 64) as u64);
-}
-
-#[inline(always)]
-const fn emit_square_column(
-    output: &mut [u64; LIMBS * 2],
-    column: usize,
-    accumulator: &mut [u64; 3],
-) {
-    output[column] = accumulator[0];
-    accumulator[0] = accumulator[1];
-    accumulator[1] = accumulator[2];
-    accumulator[2] = 0;
 }
 
 #[inline(always)]
@@ -851,6 +823,81 @@ mod tests {
             value = value.mul(radix).add(Oracle::from_u64(wide[index]));
         }
         value.to_canonical_bytes()
+    }
+
+    #[test]
+    fn full_width_products_match_independent_integer_multiplication() {
+        // Exact 640-bit integer comparison, not a comparison modulo p.
+        fn reference(left: [u64; LIMBS], right: [u64; LIMBS]) -> [u64; LIMBS * 2] {
+            let (low, high) = crypto_bigint::U320::from_words(left)
+                .widening_mul(&crypto_bigint::U320::from_words(right));
+            let mut words = [0; LIMBS * 2];
+            words[..LIMBS].copy_from_slice(&low.to_words());
+            words[LIMBS..].copy_from_slice(&high.to_words());
+            words
+        }
+        fn check(left: [u64; LIMBS], right: [u64; LIMBS]) {
+            assert_eq!(multiply_wide(left, right), reference(left, right));
+            assert_eq!(square_wide(left), reference(left, left));
+        }
+        let boundaries = [
+            [0; LIMBS],
+            [1; LIMBS],
+            [u64::MAX; LIMBS],
+            [0xaaaa_aaaa_aaaa_aaaa; LIMBS],
+            [0x5555_5555_5555_5555; LIMBS],
+        ];
+        for left in boundaries {
+            for right in boundaries {
+                check(left, right);
+            }
+        }
+        for bit in 0..320 {
+            let mut one_bit = [0; LIMBS];
+            one_bit[bit / 64] = 1_u64 << (bit % 64);
+            check(one_bit, [u64::MAX; LIMBS]);
+        }
+        let mut state = 0x0301_fe64_c0ba_u64;
+        for _ in 0..50_000 {
+            let left = core::array::from_fn(|_| splitmix64(&mut state));
+            let right = core::array::from_fn(|_| splitmix64(&mut state));
+            check(left, right);
+        }
+    }
+
+    #[test]
+    fn small_products_cover_domain_endpoints_and_extreme_constants() {
+        // Small-fold contract: x < 4p, c <= u32::MAX; result < 2p.
+        let three_p = add_limbs(MODULUS_TIMES_TWO, MODULUS).0;
+        let four_p = add_limbs(MODULUS_TIMES_TWO, MODULUS_TIMES_TWO).0;
+        let minus_one = |words| subtract_limbs(words, [1, 0, 0, 0, 0]).0;
+        for words in [
+            [0; LIMBS],
+            [1, 0, 0, 0, 0],
+            minus_one(MODULUS),
+            MODULUS,
+            minus_one(MODULUS_TIMES_TWO),
+            MODULUS_TIMES_TWO,
+            minus_one(three_p),
+            three_p,
+            minus_one(four_p),
+        ] {
+            let mut wide = [0; LIMBS * 2];
+            wide[..LIMBS].copy_from_slice(&words);
+            let value = Oracle::from_canonical_bytes(&oracle_reduce_wide(wide))
+                .expect_copied("oracle output is canonical");
+            for multiplier in [0, 1, 301, 2_086_388_028, u32::MAX - 1, u32::MAX] {
+                let reduced =
+                    reduce_small_product_unreduced(multiply_five_by_u32(words, multiplier));
+                assert_eq!(subtract_limbs(reduced, MODULUS_TIMES_TWO).1, 1);
+                assert_eq!(
+                    Fe301(conditional_subtract_modulus_ct(reduced)).to_canonical_bytes(),
+                    value
+                        .mul(Oracle::from_u64(multiplier as u64))
+                        .to_canonical_bytes()
+                );
+            }
+        }
     }
 
     #[test]
