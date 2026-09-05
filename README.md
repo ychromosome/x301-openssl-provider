@@ -1,26 +1,138 @@
-# X301 core review step
+# X301 OpenSSL Provider
 
-This first review commit contains the experimental X301 Rust core, its
-independent Python reference and vectors, frozen inputs, curve evidence,
-vendored dependencies and portable test sources. The existing Ed301
-draft-00 compatibility core is preserved unchanged; it is not the separate
-Ed301-v1 provider. Ed301 and X301 keys must remain separate.
+This repository contains experimental implementations of:
 
-The next commit adds the complete X301 and X301MLKEM1024 OpenSSL provider,
-integration, packaging, authoritative gates and final user documentation.
-No wire format is changed by this history condensation. The complete
-development history remains on `provider-experiment` at commit
-`569dc4ff10e0e5e19d106cbe490d2a5aaeac935e`.
+- X301 `KEYMGMT` and `KEYEXCH`; and
+- the private-use TLS 1.3 group `X301MLKEM1024`.
 
-The root Cargo workspace is independently buildable with locked, vendored,
-offline dependencies. Its unit-test configurations are debug and release,
-each with default features, `sign-self-verify`, `x301`, and
-`x301,sign-self-verify`. The X301-only no-default-features build is separate.
-Release overflow checks remain enabled for owned code; the existing
-crypto-bigint 0.7.5 exception and profile guard are preserved unchanged.
+The source is not approved for production use. NamedGroup `0xFE2E` is
+test-only and is not an IANA allocation. Remaining gates are listed in
+`STATUS.md`.
 
-These intermediate unit checks are not the final authoritative integration
-gate. This is a research and review candidate, not a production release,
-completed audit or universal constant-time or zeroization claim.
+## Curve
 
-Apache-2.0; vendored dependencies retain their original licenses and notices.
+X301 uses the Montgomery model birationally equivalent to Ed301:
+
+```text
+B*v^2 = u^3 + A*u^2 + u  over F_p,
+p = 2^301 - 2^99 + 947,
+A = 2*(a+d)/(a-d),  B = 4/(a-d),
+a = 2086388329,  d = 301.
+```
+
+The Edwards-to-Montgomery map uses `u=(1+y)/(1-y)`. The canonical Montgomery
+base coordinate is:
+
+```text
+5ba6f0f4ccc6ff5f018a2496fe165eb7d1893949fe3d05f79c12d2bd99952cd42d2ae9546308
+```
+
+The curve and twist have cofactors 4 and respective 300- and 299-bit prime
+factors; the generic negation-optimized Pollard-rho work factor is about
+`2^149.3`. X301 follows the RFC 7748 ladder pattern but is not an RFC 7748 or
+IANA-standardized algorithm. Exact constants are in `docs/X301_DRAFT.md`.
+
+## Contracts
+
+X301 private keys, public keys, and shared secrets are 38 bytes. External
+public inputs clear bits 301-303 and reduce once modulo
+`p = 2^301 - 2^99 + 947`. Stored and exported public keys are canonical.
+Derivation rejects an all-zero result.
+
+Private scalars clear bits 0-1 and 301-303 and set bit 300.
+
+Ed301 and X301 use separate key types and keys. X301 reuses the safe-Rust
+5x64 field backend derived from the Ed301 curve work, but this repository
+builds no Ed301 signature provider. Every derive uses the same Montgomery
+ladder.
+
+X301MLKEM1024 fetches `ML-KEM-1024` through EVP in the provider child library
+context. Without it, raw X301 remains available, but no hybrid TLS group is
+advertised.
+This repository contains no ML-KEM implementation or hybrid KDF.
+
+| Value | Layout | Bytes |
+| --- | --- | ---: |
+| Client share | ML-KEM key || X301 public | 1606 |
+| Server share | ML-KEM ciphertext || X301 public | 1606 |
+| Shared secret | ML-KEM secret || X301 secret | 70 |
+
+The normative profile is `docs/X301_DRAFT.md`. Local construction choices and
+OpenSSL deviations are in `docs/X301_CONSTRUCTION_REGISTER.md` and
+`docs/OPENSSL_PATTERN_DEVIATIONS.md`.
+
+## Modules and OpenSSL lanes
+
+| Build | Module | Operations |
+| --- | --- | --- |
+| X301 raw | `x301-raw.so` | `KEYMGMT`, `KEYEXCH` |
+| X301 hybrid | `x301.so` | X301 plus `X301MLKEM1024` |
+
+Modules accept the OpenSSL ABI major used at build time: 3 or 4. The tested
+reference lanes are 3.5.8 and 4.0.2.
+
+## Performance
+
+Median time in microseconds on a Ryzen 9 5950X, pinned to one CPU, seven
+samples, OpenSSL 3.5.8:
+
+| Operation | X25519 | X301 | X448 |
+| --- | ---: | ---: | ---: |
+| Key generation | 23.72 | 29.44 | 144.29 |
+| First derive | 23.64 | 59.60 | 119.20 |
+| Cold derive, including setup | 24.82 | 61.36 | 120.37 |
+
+| Operation | X25519MLKEM768 | X301MLKEM1024 | X448MLKEM1024 |
+| --- | ---: | ---: | ---: |
+| Key generation | 50.06 | 67.86 | 183.81 |
+| Encapsulate | 63.99 | 108.57 | 285.56 |
+| Decapsulate | 48.46 | 89.96 | 151.84 |
+
+The X25519 hybrid uses ML-KEM-768; the X301 and X448 hybrids use ML-KEM-1024.
+Results are machine-specific. Method and receipt:
+`docs/PERFORMANCE_MEASUREMENT.md` and
+`performance/receipts/2026-09-04-ryzen5950x-openssl-3.5.8/`.
+
+## Verification
+
+Authoritative gates require a caller-authenticated, read-only snapshot:
+
+```sh
+scripts/run-authoritative-gate.sh archive <trusted-sha256> check
+```
+
+The launcher removes inherited startup and tool-control variables before the
+gate shell starts. Calling an underlying gate script directly does not produce
+authoritative evidence. The host kernel, dynamic loader, and outer process
+starter remain trusted.
+
+Provider and TLS matrices:
+
+```sh
+scripts/run-authoritative-gate.sh archive <trusted-sha256> \
+  test-x301-provider-contracts \
+    /trusted/openssl-3.5.8-lane <3.5.8-evidence-sha256> \
+    /trusted/openssl-4.0.2-lane <4.0.2-evidence-sha256>
+
+scripts/run-authoritative-gate.sh archive <trusted-sha256> test-x301-tls \
+    /trusted/openssl-3.5.8-lane <3.5.8-evidence-sha256> \
+    /trusted/openssl-4.0.2-lane <4.0.2-evidence-sha256>
+```
+
+`scripts/check-x301-long.sh` runs the million-iteration vector.
+`scripts/check-x301-timing.sh` runs the dudect timing lane against a built
+module (`docs/X301_EXTENDED_ASSURANCE.md`).
+`docs/PERFORMANCE_MEASUREMENT.md` defines benchmark provenance.
+
+## Source map
+
+- `crates/ed301-eddsa/src/x301.rs`: X301 core.
+- `provider/crates/x301-provider/`: X301 and hybrid provider.
+- `provider-tests/x301/`: EVP, hybrid, TLS, fuzz, and generated vectors.
+- `reference/x301/`: independent variable-time Python oracle.
+- `evidence/curve-provenance/`: retained curve-search and verification files.
+- `ZEROIZATION_AND_CT_BOUNDARY.md`: secret-handling limits.
+
+## License
+
+Apache-2.0. Vendored dependencies retain their own licenses.

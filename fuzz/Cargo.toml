@@ -1,0 +1,33 @@
+[package]
+name = "x301-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.91"
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+ed301-eddsa = { path = "../crates/ed301-eddsa", features = ["x301"] }
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "x301_core"
+path = "fuzz_targets/x301_core.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+resolver = "3"
+
+[profile.release]
+debug = 1
+debug-assertions = true
+overflow-checks = true
+panic = "unwind"
+
+[profile.release.package."crypto-bigint:0.7.5"]
+overflow-checks = false

@@ -1,0 +1,6 @@
+# X301 laboratory OpenSSL policy example
+
+The policy subpackage contains `opensslcnf-zz-x301.config.example` as an inert
+laboratory example. It does not install under `/etc/crypto-policies/local.d`
+and does not change Fedora's selected policy. Fedora's `.pmod` vocabulary does
+not contain X301 or X301MLKEM1024.
